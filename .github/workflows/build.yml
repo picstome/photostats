@@ -116,10 +116,10 @@ jobs:
       - name: Confirm the installer was produced
         if: runner.os == 'Windows'
         run: |
-          if not exist "dist\PhotoStats-Setup.exe" (
-            echo "::error::the installer was not built"
+          if (-not (Test-Path "dist\PhotoStats-Setup.exe")) {
+            Write-Output "::error::the installer was not built"
             exit 1
-          )
+          }
       - uses: actions/upload-artifact@v5
         if: runner.os == 'Windows'
         with:
