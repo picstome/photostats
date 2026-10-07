@@ -13,7 +13,7 @@ Everything runs on your machine. No account, no upload, no cloud.
 ## Install
 
 Download the build for your platform from
-[the releases page](https://github.com/neo22s/photostats/releases).
+[the releases page](https://github.com/picstome/photostats/releases).
 
 | Platform | File |
 |---|---|
@@ -176,7 +176,7 @@ second: 50 is both the fastest and the smoothest.
 ## From source
 
 ```bash
-git clone https://github.com/neo22s/photostats.git
+git clone https://github.com/picstome/photostats.git
 cd photostats
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"

@@ -13,6 +13,11 @@ authors = [{ name = "Picstome.com" }]
 keywords = ["photography", "exif", "metadata", "statistics", "raw"]
 dependencies = ["PySide6>=6.8"]
 
+[project.urls]
+Homepage = "https://github.com/picstome/photostats"
+Repository = "https://github.com/picstome/photostats"
+Issues = "https://github.com/picstome/photostats/issues"
+
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6", "pyinstaller>=6.10"]
 
