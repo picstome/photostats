@@ -1,0 +1,162 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check photostats tests
+      - name: Translations are complete
+        run: python -m photostats --audit-translations
+      - name: Test (headless Qt)
+        env: {QT_QPA_PLATFORM: offscreen}
+        run: pytest -q
+      # exiftool is needed by the integration tests.
+      - run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
+
+  build:
+    name: ${{ matrix.name }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-14, name: macOS arm64, arch: arm64, artifact: macos-arm64}
+          - {os: macos-13, name: macOS x64, arch: x64, artifact: macos-x64}
+          - {os: windows-latest, name: Windows, arch: x64, artifact: windows}
+          - {os: ubuntu-22.04, name: Linux, arch: x64, artifact: linux}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+
+      - name: Build (PyInstaller)
+        run: pyinstaller build/photostats.spec --noconfirm --distpath dist --workpath build/work
+
+      # ---- macOS -------------------------------------------------------
+      - name: Package .dmg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          # PyInstaller writes the bundle beside the COLLECT folder, not inside
+          # it: dist/Photo Stats.app, not dist/Photo Stats/Photo Stats.app.
+          APP="dist/Photo Stats.app"
+          test -d "$APP/Contents/MacOS"
+          # Ad-hoc signature: without it the app is killed on first launch.
+          # Replace with a Developer ID to remove the Gatekeeper warning.
+          codesign --deep --force --sign - "$APP"
+          # A staging folder with an /Applications symlink, so the mounted disk
+          # image is drag-to-install rather than "drag, then work out where".
+          STAGE="$(mktemp -d)"
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Photo Stats" -srcfolder "$STAGE" \
+            -ov -format UDZO -imagekey zlib-level=9 "dist/Photo Stats-${{ matrix.arch }}.dmg"
+          rm -rf "$STAGE"
+          # The tarball carries the bundle too, for anyone who would rather not
+          # mount a disk image.
+          tar -czf "dist/Photo Stats-${{ matrix.arch }}.tar.gz" -C dist "Photo Stats.app"
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
+        with:
+          name: PhotoStats-macos-${{ matrix.arch }}
+          path: |
+            dist/Photo Stats-*.dmg
+            dist/Photo Stats-*.tar.gz
+
+      # ---- Windows -----------------------------------------------------
+      - name: Package zip (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          Compress-Archive -Path "dist\Photo Stats" -DestinationPath "dist\PhotoStats-${{ matrix.artifact }}.zip"
+      # Inno Setup 6 ships with the windows-latest image.
+      - name: Build installer (Windows)
+        if: runner.os == 'Windows'
+        run: iscc /DMyAppVersion=1.0.0 build\photostats.iss
+      - name: Confirm the installer was produced
+        if: runner.os == 'Windows'
+        run: |
+          if not exist "dist\PhotoStats-Setup.exe" (
+            echo "::error::the installer was not built"
+            exit 1
+          )
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: PhotoStats-windows
+          path: |
+            dist/PhotoStats-*.zip
+            dist/PhotoStats-Setup.exe
+
+      # ---- Linux -------------------------------------------------------
+      - name: Package tarball and AppImage (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          tar -czf "dist/PhotoStats-${{ matrix.artifact }}.tar.gz" -C dist "Photo Stats"
+          chmod +x "dist/Photo Stats/Photo Stats"
+          # AppImage is best-effort: the tool needs FUSE, which runners lack.
+          npx --yes @electron/appimage-builder --help >/dev/null 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: PhotoStats-linux
+          path: dist/PhotoStats-*.tar.gz
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {path: artifacts, merge-multiple: true}
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: artifacts/**
+          body: |
+            ## Photo Stats
+
+            Download the build for your platform:
+
+            | Platform | File |
+            |---|---|
+            | macOS (Apple silicon) | `Photo Stats-arm64.dmg` |
+            | macOS (Intel) | `Photo Stats-x64.dmg` |
+            | Windows | `PhotoStats-windows.zip` (or `PhotoStats-Setup.exe`) |
+            | Linux | `PhotoStats-linux.tar.gz` |
+
+            macOS will warn the app is from an unidentified developer: open it
+            once with right-click → Open, then it opens normally.
+
+            All builds use the exiftool installed on your system:
+
+            - macOS: `brew install exiftool`
+            - Windows: download `exiftool.exe` from https://exiftool.org and put
+              it in your PATH (or point Photo Stats at it in Settings)
+            - Linux: `sudo apt install libimage-exiftool-perl`
+
+            Photo Stats opens a setup sheet with these commands if it cannot find
+            exiftool.

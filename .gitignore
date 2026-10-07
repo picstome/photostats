@@ -1,2 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# The statistics cache is written next to the photo library, never in the repo
+photo_stats.db
+photo_stats.db-wal
+photo_stats.db-shm
+photo_stats_cache.db*
+
+# Tests
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Packaging output
+build/work/
+dist/
+build/assets/icon.icns
+
+# Editors and OS
 .DS_Store
-.DS_Store
+.idea/
+.vscode/
+*.swp
