@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import AUTHOR_URL
+from ..core import updates
 from ..core.config import AppConfig
 from ..core.exiftool import find_exiftool, install_hint
 from ..core.filters import (
@@ -49,6 +50,7 @@ from .components.card import Card, Chip, Divider
 from .components.folder_bar import FolderBar, _shorten
 from .components.footer_link import FooterLink
 from .components.timeline import TimelineChart, period_bounds
+from .components.update_banner import UpdateBanner
 from .core_filters_bridge import LIST_FACETS
 from .panels.filter_panel import FilterPanel
 from .panels.photo_list_window import PAGE_SIZE, PhotoListWindow
@@ -75,6 +77,12 @@ class QueryEmitter(QObject):
     """
 
     done = Signal(int, object)
+
+
+class UpdateEmitter(QObject):
+    """Carries the monthly update check's answer back to the GUI thread."""
+
+    found = Signal(object)  # Release | None
 
 
 def run_queries(store: PhotoStore, filters: Filter, sort: str, generation: int,
@@ -138,6 +146,11 @@ class MainWindow(QMainWindow):
         self._query_thread: threading.Thread | None = None
         self._query_emitter = QueryEmitter()
         self._query_emitter.done.connect(self._on_results)
+        #: The last release the monthly check found, kept so a theme rebuild
+        #: can put the banner back without asking GitHub again.
+        self._available_release = None
+        self._update_emitter = UpdateEmitter()
+        self._update_emitter.found.connect(self._on_update_found)
         self._photo_window: PhotoListWindow | None = None
         self._list_offset = 0
         self._scan_dialog_shown = False
@@ -166,6 +179,9 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._build_shortcuts()
+        # Ask GitHub once a month, well after the window is up so startup never
+        # waits on the network.
+        QTimer.singleShot(1500, self._maybe_check_updates)
         if self.library is not None:
             self.open_library(self.library, quietly=True)
         else:
@@ -233,6 +249,13 @@ class MainWindow(QMainWindow):
         content_layout = QVBoxLayout(self.content)
         content_layout.setContentsMargins(16, 12, 16, 12)
         content_layout.setSpacing(12)
+
+        # Only ever visible when a newer release exists.
+        self.update_banner = UpdateBanner(self.theme)
+        self.update_banner.open_failed.connect(self._on_link_failed)
+        if self._available_release is not None:
+            self.update_banner.show_release(self._available_release)
+        content_layout.addWidget(self.update_banner)
 
         # At-a-glance numbers before any chart. The tiles and the insights are
         # one block at the top: the figures first, then the sentences that read
@@ -1004,6 +1027,33 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setFixedWidth(width)
         return spacer
+
+    # -- updates -----------------------------------------------------------
+    def _maybe_check_updates(self) -> None:
+        """Start the monthly check, unless it is off or not yet due.
+
+        The timestamp is written before the request, not after: an attempt is
+        what should be rare, so a machine that is offline at check time waits
+        the full month like any other rather than retrying on every launch.
+        """
+        if not self.config.updates_enabled:
+            return
+        if not updates.due(self.config.last_update_check):
+            return
+        self.config.set_last_update_check()
+        threading.Thread(target=self._check_updates_worker, daemon=True).start()
+
+    def _check_updates_worker(self) -> None:
+        release = updates.available_update()
+        # The window may have closed while the request was in flight.
+        with contextlib.suppress(RuntimeError):
+            self._update_emitter.found.emit(release)
+
+    def _on_update_found(self, release) -> None:
+        if release is None:
+            return
+        self._available_release = release
+        self.update_banner.show_release(release)
 
     def _on_link_failed(self, url: str) -> None:
         """No browser to hand the link to: say so instead of doing nothing."""

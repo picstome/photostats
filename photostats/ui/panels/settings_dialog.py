@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -122,6 +123,12 @@ class SettingsDialog(QDialog):
         self.include_no_date = QRadioButton(tr("Use the file date when a photo has no EXIF date"))
         self.include_no_date.setChecked(config.include_no_date)
 
+        self.check_updates = QCheckBox(tr("Check for new versions once a month"))
+        self.check_updates.setToolTip(
+            tr("One request to the public GitHub API, no account or token")
+        )
+        self.check_updates.setChecked(config.updates_enabled)
+
         self.language_box = QComboBox()
         # Empty data means "follow the OS". Without this entry a fresh install
         # silently pinned the interface to the first language in the list
@@ -154,6 +161,7 @@ class SettingsDialog(QDialog):
         form.addRow(tr("Read files in parallel"), self.workers)
         form.addRow(tr("Batch size"), self.batch)
         form.addRow("", self.include_no_date)
+        form.addRow("", self.check_updates)
 
         self.restore = QPushButton(tr("Restore defaults"))
         self.restore.setObjectName("linkButton")
@@ -221,6 +229,7 @@ class SettingsDialog(QDialog):
         self.workers.setValue(self.config.workers)
         self.batch.setValue(self.config.batch_size)
         self.include_no_date.setChecked(self.config.include_no_date)
+        self.check_updates.setChecked(self.config.updates_enabled)
         detected = find_exiftool(self.config.exiftool_path or None)
         if detected:
             self.exiftool_label.setText(
@@ -262,6 +271,7 @@ class SettingsDialog(QDialog):
         self.config.set_cache(self.cache_box.currentData(), self.custom_path.text())
         self.config.set_indexing(self.workers.value(), self.batch.value())
         self.config.set_include_no_date(self.include_no_date.isChecked())
+        self.config.set_updates_enabled(self.check_updates.isChecked())
         self.config.set_language(self.language_box.currentData())
         self.config.sync()
 

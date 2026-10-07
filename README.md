@@ -160,6 +160,22 @@ If you used the original `photo_stats.py`, Photo Stats offers to import its
 
 ---
 
+## Updating
+
+Photo Stats checks GitHub Releases **once a month** for a newer version and,
+when there is one, shows a **Download** button that opens the right file for your
+platform — the `.dmg`, the Windows installer, or the Linux tarball. The check is
+a single request to the public GitHub API: no account, no token, no telemetry,
+and nothing is sent about you. Turn it off in **Settings → Check for new
+versions once a month**.
+
+To update by hand, download the latest build from the
+[releases page](https://github.com/picstome/photostats/releases) and install it
+over the current one. Your `photo_stats.db` lives with your photos and is left
+alone.
+
+---
+
 ## Settings
 
 **Settings** covers the theme, the interface language, the cache location, the

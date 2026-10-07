@@ -6,6 +6,7 @@ from the engine so that the core can be used without a GUI.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
@@ -174,6 +175,28 @@ class AppConfig:
         else:
             self.settings.remove("language")
 
+    # -- updates -----------------------------------------------------------
+    @property
+    def updates_enabled(self) -> bool:
+        """Whether to ask GitHub for a newer release; on unless turned off."""
+        return bool(self.settings.value("updates_check", True, type=bool))
+
+    def set_updates_enabled(self, enabled: bool) -> None:
+        self.settings.setValue("updates_check", bool(enabled))
+
+    @property
+    def last_update_check(self) -> datetime | None:
+        raw = str(self.settings.value("last_update_check", "") or "")
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+
+    def set_last_update_check(self, when: datetime | None = None) -> None:
+        self.settings.setValue(
+            "last_update_check", (when or datetime.now()).isoformat(timespec="seconds")
+        )
+
     def reset_defaults(self) -> None:
         """Forget every stored preference and fall back to the built-in ones.
 
@@ -191,6 +214,8 @@ class AppConfig:
         self.settings.setValue("batch_size", DEFAULT_BATCH)
         self.settings.setValue("include_no_date", False)
         self.settings.remove("language")
+        self.settings.setValue("updates_check", True)
+        self.settings.remove("last_update_check")
         self.settings.sync()
 
     def sync(self) -> None:

@@ -50,6 +50,9 @@ def window(app, paths, dismiss_dialogs, request):
 
     config = AppConfig(paths=paths)
     config.set_theme("dark")
+    # Never let a test reach GitHub: the monthly update check is off in the
+    # suite. The banner itself is exercised directly.
+    config.set_updates_enabled(False)
     apply_theme(app, config)   # the real app does this in main(); without it the
     main = MainWindow(config, logging.getLogger("photostats.tests"))
     main.show()
@@ -634,6 +637,46 @@ def test_moving_the_from_picker_inside_the_span_filters(window, library, app):
 
     assert window.filters.date_from == later.toPython()
     assert _matched(window) < window.store.totals().total
+
+
+# -- the monthly update check ----------------------------------------------
+
+def test_the_update_banner_is_hidden_until_there_is_a_release(window, library):
+    from photostats.core.updates import Release
+
+    assert window.update_banner.isHidden()
+
+    release = Release(
+        version="9.9.9", tag="v9.9.9", url="https://example.com/r",
+        assets={"Photo Stats-arm64.dmg": "https://example.com/a.dmg"})
+    window._on_update_found(release)
+
+    assert not window.update_banner.isHidden()
+    assert "9.9.9" in window.update_banner.label.text()
+
+
+def test_a_failed_check_says_nothing(window, library):
+    """Being offline is not an error worth a banner."""
+    window._on_update_found(None)
+    assert window.update_banner.isHidden()
+
+
+def test_the_monthly_check_respects_the_interval(window, library):
+    """No request before the interval is up, and none when it is turned off."""
+    from datetime import datetime
+
+    started = []
+    window._check_updates_worker = lambda: started.append(1)
+
+    window.config.set_updates_enabled(True)
+    window.config.set_last_update_check(datetime.now())
+    window._maybe_check_updates()
+    assert started == [], "checked again inside the month"
+
+    window.config.set_updates_enabled(False)
+    window.config.set_last_update_check(None)
+    window._maybe_check_updates()
+    assert started == [], "checked even though updates are off"
 
 
 # -- charts say what you selected ------------------------------------------

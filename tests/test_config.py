@@ -62,6 +62,30 @@ def test_clearing_the_language_returns_to_the_system_default(config):
     assert config.language == ""
 
 
+def test_updates_are_on_by_default_and_can_be_turned_off(config):
+    from datetime import datetime
+
+    assert config.updates_enabled is True
+    assert config.last_update_check is None
+
+    config.set_updates_enabled(False)
+    assert config.updates_enabled is False
+
+    when = datetime(2026, 10, 7, 9, 30)
+    config.set_last_update_check(when)
+    assert config.last_update_check == when
+
+
+def test_reset_defaults_turns_updates_back_on(config):
+    config.set_updates_enabled(False)
+    config.set_last_update_check()
+
+    config.reset_defaults()
+
+    assert config.updates_enabled is True
+    assert config.last_update_check is None
+
+
 def test_reset_defaults_undoes_every_stored_preference(config):
     config.set_theme("dark")
     config.set_indexing(1, 4000)

@@ -14,6 +14,11 @@ ORG_DOMAIN = "picstome.com"
 AUTHOR = "Picstome.com"
 AUTHOR_URL = "https://picstome.com"
 
+#: Where the source lives and the builds are published. The monthly update
+#: check asks this repository's Releases API for the latest tag, so moving the
+#: project means changing one string.
+REPO_SLUG = "picstome/photostats"
+
 
 def display_name() -> str:
     """The full product name: 'Photo Stats by Picstome.com'."""
@@ -21,4 +26,4 @@ def display_name() -> str:
 
 
 __all__ = ["__version__", "APP_NAME", "APP_SLUG", "ORG_NAME", "ORG_DOMAIN",
-           "AUTHOR", "AUTHOR_URL", "display_name"]
+           "AUTHOR", "AUTHOR_URL", "REPO_SLUG", "display_name"]
