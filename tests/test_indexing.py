@@ -235,6 +235,23 @@ def test_the_windows_icon_is_a_real_ico():
     assert 16 in sizes and 32 in sizes and 256 in sizes
 
 
+def test_the_spec_ships_the_translation_catalogues():
+    """A build without them shows raw keys everywhere.
+
+    The 1.0 bundle was built before the package was installed, so
+    ``collect_data_files`` found nothing and every ``tr()`` fell back to its
+    key — the window title read "Photo Stats by {author}". The spec now reads
+    the catalogues straight from the tree; this guards that.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    spec = (root / "build" / "photostats.spec").read_text()
+    assert "photostats/i18n" in spec, "the spec no longer bundles the catalogues"
+    for code in ("en", "es"):
+        assert (root / "photostats" / "i18n" / f"{code}.json").is_file()
+
+
 def test_the_windows_installer_says_picstome():
     from pathlib import Path
 

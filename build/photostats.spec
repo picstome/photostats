@@ -14,8 +14,6 @@ app looks it up at runtime and offers to install it if it is missing.
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files
-
 SPEC_DIR = Path(SPECPATH).resolve()
 ROOT = SPEC_DIR.parent
 ENTRY = ROOT / "run_photostats.py"
@@ -42,7 +40,25 @@ EXCLUDES = [
     "tkinter", "unittest", "pydoc_data", "lib2to3", "numpy", "PIL",
 ]
 
-datas = collect_data_files("photostats", include_py_files=False)
+datas = []
+# The translation catalogues, read straight from the source tree. Not
+# collect_data_files("photostats"), which only finds them when the package
+# happens to be installed: the 1.0 build ran before `pip install -e .`, shipped
+# with no catalogues at all, and every tr() fell back to its key — the window
+# title read "Photo Stats by {author}". A missing catalogue is a broken build,
+# so it stops here rather than shipping an English-only app that looks broken.
+I18N_DIR = ROOT / "photostats" / "i18n"
+CATALOGUES = sorted(I18N_DIR.glob("*.json"))
+if not CATALOGUES:
+    raise SystemExit(f"no translation catalogues under {I18N_DIR}")
+datas += [(str(path), "photostats/i18n") for path in CATALOGUES]
+
+# Optional brand assets (fonts, logos); absent is fine, they fall back.
+ASSETS_DIR = ROOT / "photostats" / "assets"
+for path in sorted(ASSETS_DIR.rglob("*")):
+    if path.is_file() and path.name != ".DS_Store":
+        dest = Path("photostats") / "assets" / path.relative_to(ASSETS_DIR).parent
+        datas.append((str(path), str(dest)))
 
 hiddenimports = ["photostats.ui.main_window", "photostats.app"]
 
