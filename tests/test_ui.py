@@ -679,6 +679,47 @@ def test_the_monthly_check_respects_the_interval(window, library):
     assert started == [], "checked even though updates are off"
 
 
+# -- the legacy import -----------------------------------------------------
+
+def test_a_scan_never_runs_beside_a_legacy_import(window, library):
+    """Both write to the same SQLite file, and the walk holds a long write lock.
+
+    Starting the scan while the import is writing is what produced "database is
+    locked" and an import that could never finish.
+    """
+    window._scanning = False
+    window.import_worker = object()  # an import in flight
+    try:
+        window._start_scan()
+        assert window._scanning is False, "the scan started beside the import"
+    finally:
+        window.import_worker = None
+
+
+def test_the_legacy_offer_is_made_only_once(window, library):
+    from photostats.core.paths import LEGACY_DB_FILENAME
+
+    (library / LEGACY_DB_FILENAME).write_bytes(b"SQLite format 3\x00")
+    window._legacy_offered = False
+    assert window._importable_legacy() is not None
+    window._legacy_offered = True
+    assert window._importable_legacy() is None
+
+
+def test_an_already_imported_library_is_not_offered_again(window, library):
+    from photostats.core import db as dbmod
+    from photostats.core.db import set_meta
+    from photostats.core.paths import LEGACY_DB_FILENAME
+
+    (library / LEGACY_DB_FILENAME).write_bytes(b"SQLite format 3\x00")
+    conn = dbmod.connect(window.db_path)
+    set_meta(conn, "legacy_imported_from", "/old/photo_stats_cache.db")
+    conn.close()
+
+    window._legacy_offered = False
+    assert window._importable_legacy() is None
+
+
 # -- charts say what you selected ------------------------------------------
 
 def test_chart_badge_names_the_selection(window, library, app):

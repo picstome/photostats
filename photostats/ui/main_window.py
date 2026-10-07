@@ -165,6 +165,8 @@ class MainWindow(QMainWindow):
         self._query_pending = False
         #: What the footer says when there is more to say than the photo count.
         self._footer_note = ""
+        #: The legacy-cache prompt is offered once per session, not per open.
+        self._legacy_offered = False
 
         self.resize(1360, 880)
         self.setAcceptDrops(True)
@@ -186,7 +188,6 @@ class MainWindow(QMainWindow):
             self.open_library(self.library, quietly=True)
         else:
             self._show_welcome()
-        QTimer.singleShot(0, self._offer_legacy_import)
 
     # -- construction ------------------------------------------------------
     def _theme(self):
@@ -480,9 +481,17 @@ class MainWindow(QMainWindow):
         self._data_version += 1
         self.store.invalidate_cache()
         self.filter_panel.set_bounds(self.store.ranges())
-        self._offer_legacy_import()
         self._refresh(force=True)
-        self._start_scan()
+        # The legacy import runs *before* the scan, never beside it: both write
+        # to the same SQLite file, and the walk holds one write transaction
+        # across thousands of files, so starting them together ends in
+        # "database is locked" and an import that can never finish. When there
+        # is a cache to offer, the scan waits until that question is answered.
+        legacy = self._importable_legacy()
+        if legacy is not None:
+            QTimer.singleShot(0, lambda: self._offer_legacy_import(legacy))
+        else:
+            self._start_scan()
 
     def _close_store(self) -> None:
         if self.store is not None:
@@ -491,7 +500,9 @@ class MainWindow(QMainWindow):
 
     # -- scanning ----------------------------------------------------------
     def _start_scan(self, force: bool = False) -> None:
-        if self._scanning or self.library is None or self.db_path is None:
+        # Never scan while the legacy import is writing: one SQLite writer.
+        if (self._scanning or self.import_worker is not None
+                or self.library is None or self.db_path is None):
             return
         self._scanning = True
         self.folder_bar.set_scanning(True)
@@ -1064,10 +1075,28 @@ class MainWindow(QMainWindow):
         self._refresh(force=True)
 
     # -- legacy cache ------------------------------------------------------
-    def _offer_legacy_import(self) -> None:
-        legacy = legacy_candidates(self.library)
-        if not legacy or self.db_path is None:
-            return
+    def _importable_legacy(self) -> Path | None:
+        """The old cache worth offering to import, or None.
+
+        Offered once per session and only until one has actually been imported,
+        so the question does not come back on every open. ``legacy_candidates``
+        returns a path only when the file is really there.
+        """
+        if self._legacy_offered or self.import_worker is not None or self.db_path is None:
+            return None
+        if self._already_imported():
+            return None
+        return legacy_candidates(self.library)
+
+    def _already_imported(self) -> bool:
+        if self.store is None:
+            return False
+        from ..core.db import get_meta
+
+        return bool(get_meta(self.store.conn, "legacy_imported_from"))
+
+    def _offer_legacy_import(self, legacy: Path) -> None:
+        self._legacy_offered = True
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Question)
         box.setWindowTitle(tr("Reuse an existing index?"))
@@ -1081,6 +1110,9 @@ class MainWindow(QMainWindow):
         box.exec()
         if box.clickedButton() is yes:
             self._start_legacy_import(legacy)
+        else:
+            # Declined: the scan was waiting on this answer, so let it go now.
+            self._start_scan()
 
     def _start_legacy_import(self, legacy: Path) -> None:
         self.status_label.setText(tr("Importing the old index…"))
@@ -1098,6 +1130,9 @@ class MainWindow(QMainWindow):
         self.status_label.setText(report.summary())
         self.logger.info(report.summary())
         self._refresh(force=True)
+        # The import wrote the cache the scan would otherwise have read; now the
+        # scan can run, and it will only have to read what the cache missed.
+        self._start_scan()
 
     # -- drag and drop -----------------------------------------------------
     def dragEnterEvent(self, event) -> None:  # noqa: D102, N802

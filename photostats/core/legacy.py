@@ -126,13 +126,17 @@ def import_legacy_cache(
                 on_progress(report.imported)
         report.skipped = len(skipped)
         report.skipped_paths = tuple(skipped[:5])
+        # Inside the try: this write is what raised "database is locked" out of
+        # the importer when it sat after the finally, so the caller never got a
+        # report and the thread died silently.
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_imported_from', ?)",
+            (str(legacy_path),),
+        )
     except sqlite3.Error as exc:
         report.error = str(exc)
     finally:
         source.close()
-
-    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_imported_from', ?)",
-                 (str(legacy_path),))
     return report
 
 

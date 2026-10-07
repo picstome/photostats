@@ -64,16 +64,20 @@ class LegacyImportWorker(QThread):
 
     def run(self) -> None:  # noqa: D102 - Qt entry point
         from ..core import db as dbmod
-        from ..core.legacy import import_legacy_cache
+        from ..core.legacy import ImportReport, import_legacy_cache
 
-        dbmod.init_db(self.db_path)
-        conn = dbmod.connect(self.db_path)
+        report = ImportReport()
         try:
-            report = import_legacy_cache(
-                self.legacy_path, conn, self.root, on_progress=self.progress.emit
-            )
-        finally:
-            conn.close()
+            dbmod.init_db(self.db_path)
+            conn = dbmod.connect(self.db_path)
+            try:
+                report = import_legacy_cache(
+                    self.legacy_path, conn, self.root, on_progress=self.progress.emit
+                )
+            finally:
+                conn.close()
+        except Exception as exc:  # a dead thread must still answer the window
+            report = ImportReport(error=str(exc))
         self.finished_import.emit(report)
 
     def cancel(self) -> None:

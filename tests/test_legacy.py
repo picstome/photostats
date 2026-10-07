@@ -198,3 +198,45 @@ def test_legacy_candidates_finds_the_file_next_to_the_library(tmp_path):
     legacy.write_bytes(b"SQLite format 3\x00")
     assert legacy_candidates(library) == legacy
     assert legacy_candidates(tmp_path / "elsewhere") is None
+
+
+def test_a_locked_database_is_reported_not_raised(tmp_path):
+    """The importer must survive a write lock held elsewhere.
+
+    The final ``meta`` write used to sit *after* the try/finally, so a busy
+    database threw straight out of ``import_legacy_cache`` — the worker thread
+    died without ever emitting its report, and the window sat on "Importing…"
+    forever. The scan holding the walk transaction is what does it in practice.
+    """
+    import threading
+    import time
+
+    library = tmp_path / "photos"
+    library.mkdir()
+    legacy = tmp_path / LEGACY_DB_FILENAME
+    write_legacy_db(legacy, [sample_row(str(library.resolve()))])
+    db = library / "photo_stats.db"
+    dbmod.init_db(db)
+
+    release = threading.Event()
+
+    def hold_the_write_lock() -> None:
+        holder = dbmod.connect(db)
+        holder.execute("BEGIN IMMEDIATE")
+        holder.execute("INSERT INTO photos (rel_path) VALUES ('held.jpg')")
+        release.wait(timeout=5)
+        holder.rollback()
+        holder.close()
+
+    holder = threading.Thread(target=hold_the_write_lock)
+    holder.start()
+    time.sleep(0.3)
+    try:
+        conn = dbmod.connect(db, timeout=1)  # shorter than the lock is held
+        report = import_legacy_cache(legacy, conn, library)  # must not raise
+        conn.close()
+        assert report.error == "database is locked"
+        assert report.summary() == "database is locked"
+    finally:
+        release.set()
+        holder.join(timeout=5)
