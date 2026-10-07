@@ -90,13 +90,28 @@ jobs:
           STAGE="$(mktemp -d)"
           cp -R "$APP" "$STAGE/"
           ln -s /Applications "$STAGE/Applications"
-          hdiutil create -volname "Photo Stats" -srcfolder "$STAGE" \
-            -ov -format UDZO -imagekey zlib-level=9 "dist/Photo Stats-${{ matrix.arch }}.dmg"
+          DMG="dist/Photo Stats-${{ matrix.arch }}.dmg"
+          # hdiutil "create failed - Resource busy" is an intermittent, known
+          # failure on GitHub's macOS runners — the Intel image especially — and
+          # it is what failed the x64 build once. Retry with backoff before
+          # giving up; the same command then succeeds.
+          for attempt in 1 2 3 4 5; do
+            if hdiutil create -volname "Photo Stats" -srcfolder "$STAGE" \
+                 -ov -format UDZO -imagekey zlib-level=9 "$DMG"; then
+              break
+            fi
+            echo "hdiutil create failed (attempt $attempt); retrying" >&2
+            rm -f "$DMG"
+            if [ "$attempt" = 5 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
           rm -rf "$STAGE"
           # The tarball carries the bundle too, for anyone who would rather not
           # mount a disk image.
           tar -czf "dist/Photo Stats-${{ matrix.arch }}.tar.gz" -C dist "Photo Stats.app"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: runner.os == 'macOS'
         with:
           name: PhotoStats-macos-${{ matrix.arch }}
@@ -120,7 +135,7 @@ jobs:
             Write-Output "::error::the installer was not built"
             exit 1
           }
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: runner.os == 'Windows'
         with:
           name: PhotoStats-windows
@@ -135,7 +150,7 @@ jobs:
           set -euo pipefail
           tar -czf "dist/PhotoStats-${{ matrix.artifact }}.tar.gz" -C dist "Photo Stats"
           chmod +x "dist/Photo Stats/Photo Stats"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: runner.os == 'Linux'
         with:
           name: PhotoStats-linux
@@ -148,7 +163,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with: {path: artifacts, merge-multiple: true}
       - name: Create the release
         uses: softprops/action-gh-release@v2
