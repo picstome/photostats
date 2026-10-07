@@ -287,3 +287,69 @@ def test_the_bundle_identifier_is_the_picstome_one():
     # The README states it too; if either moves, the other must follow.
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
     assert match.group(1) in readme
+
+
+def test_a_failed_batch_is_split_rather_than_lost(tmp_path):
+    """exiftool times out on a batch too big for the drive; don't lose all of it.
+
+    On an external drive a 250-file batch across 16 workers can exceed the
+    180s timeout, and one file exiftool cannot parse kills the process. The old
+    reader retried the same batch and dropped every file in it — on a real
+    library that was 84,000 photos with no metadata. Halving recurses down to
+    single files, so the slow part still gets read and a bad file costs one.
+    """
+    from photostats.core.exiftool import ExifToolError
+    from photostats.core.indexer import Indexer
+
+    root = tmp_path / "photos"
+    root.mkdir()
+    indexer = Indexer(tmp_path / "photo_stats.db", root)
+
+    class Flaky:
+        """Fails on anything bigger than two files, like a timeout would."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def read_paths(self, files):
+            self.calls += 1
+            if len(files) > 2:
+                raise ExifToolError("timed out")
+            return [{"SourceFile": path} for path in files]
+
+        def close(self) -> None:
+            pass
+
+    tool = Flaky()
+    batch = [(index, f"IMG_{index:04d}.jpg") for index in range(7)]
+    rows = indexer._read_with(tool, batch)
+
+    assert len(rows) == 7
+    assert tool.calls > 1, "the batch was not split"
+    assert indexer._errors == 0
+
+
+def test_a_slow_drive_shrinks_the_read_batch(tmp_path):
+    """16 workers x 250 files overwhelms an external drive; it times out.
+
+    The reader notices and asks for fewer files per batch for the rest of the
+    scan, instead of timing out on every one and importing nothing.
+    """
+    from photostats.core.exiftool import ExifToolError
+    from photostats.core.indexer import Indexer
+
+    root = tmp_path / "photos"
+    root.mkdir()
+    indexer = Indexer(tmp_path / "photo_stats.db", root, workers=16, batch=250)
+
+    class AlwaysTimesOut:
+        def read_paths(self, files):
+            raise ExifToolError("exiftool timed out after 180s")
+
+        def close(self) -> None:
+            pass
+
+    batch = [(index, f"IMG_{index:04d}.jpg") for index in range(250)]
+    indexer._read_with(AlwaysTimesOut(), batch)
+
+    assert indexer._effective_batch == 50  # 250 // 5, the size that works

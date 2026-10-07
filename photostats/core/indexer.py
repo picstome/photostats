@@ -141,6 +141,9 @@ class Indexer:
         self.exiftool_path = exiftool_path
         self.workers = max(1, min(32, workers))
         self.batch = max(10, min(4000, batch))
+        #: The batch actually requested while reading. Shrinks if the drive
+        #: cannot serve ``workers * batch`` files at once (see _read_with).
+        self._effective_batch = self.batch
         self._on_progress = on_progress
         self._on_log = on_log
         self._cancel = threading.Event()
@@ -289,27 +292,54 @@ class Indexer:
         result.extracted = self._extracted
 
     def _read_batch(self, batch: list[tuple[int, str]]) -> list[tuple[int, str, dict]]:
-        """Read one batch with a borrowed exiftool worker, retrying once."""
+        """Read one batch with a borrowed exiftool worker."""
         tool: ExifTool = self._tool_pool.get()
         try:
-            absolute = [str(self.root / rel_path) for _, rel_path in batch]
-            try:
-                records = tool.read_paths(absolute)
-            except ExifToolError as exc:
-                self.log(f"exiftool hiccup, restarting it: {exc}")
-                tool.close()
-                records = tool.read_paths(absolute)
-            by_path = {record.get("SourceFile"): record for record in records}
-            out = [(file_id, rel_path, by_path[str(self.root / rel_path)])
-                   for file_id, rel_path in batch
-                   if str(self.root / rel_path) in by_path]
-            missing = len(batch) - len(out)
-            if missing:
-                self._errors += missing
-                self.log(f"{missing} file(s) could not be read by exiftool")
-            return out
+            return self._read_with(tool, batch)
         finally:
             self._tool_pool.put(tool)
+
+    def _read_with(
+        self, tool: ExifTool, batch: list[tuple[int, str]]
+    ) -> list[tuple[int, str, dict]]:
+        """Read a batch, halving it on failure instead of losing all of it.
+
+        exiftool times out on a batch that is too much for the drive to serve
+        in one go — 250 files across 16 workers on an external USB drive is
+        enough — and it dies outright on a file it cannot parse. Retrying the
+        whole batch then fails the same way, and the previous code dropped all
+        250 photos with it. Splitting recurses down to single files, so the
+        slow part still gets read and one bad file costs one file, not a batch.
+        """
+        absolute = [str(self.root / rel_path) for _, rel_path in batch]
+        try:
+            records = tool.read_paths(absolute)
+        except ExifToolError as exc:
+            tool.close()  # the next read_paths starts a fresh process
+            if len(batch) > 1:
+                # The drive could not serve this many files across the workers
+                # in time. Shrink what the next batches ask for, so they do not
+                # have to time out to learn the same thing; then halve this one
+                # and try again, down to single files.
+                if len(batch) == self._effective_batch and self._effective_batch > 10:
+                    self._effective_batch = max(10, len(batch) // 5)
+                    self.log(f"reading fewer files per batch ({self._effective_batch}) "
+                             f"to suit this drive: {exc}")
+                middle = len(batch) // 2
+                return (self._read_with(tool, batch[:middle])
+                        + self._read_with(tool, batch[middle:]))
+            self._errors += 1
+            self.log(f"could not read {batch[0][1]}: {exc}")
+            return []
+        by_path = {record.get("SourceFile"): record for record in records}
+        out = [(file_id, rel_path, by_path[str(self.root / rel_path)])
+               for file_id, rel_path in batch
+               if str(self.root / rel_path) in by_path]
+        missing = len(batch) - len(out)
+        if missing:
+            self._errors += missing
+            self.log(f"{missing} file(s) could not be read by exiftool")
+        return out
 
     def _write_batch(
         self, conn: sqlite3.Connection, rows: list[tuple[int, str, dict]]
@@ -364,7 +394,7 @@ class Indexer:
         return written, highest
 
     def _next_batch(self, conn: sqlite3.Connection, after_id: int) -> list[tuple[int, str]]:
-        return representatives_needing_extraction(conn, after_id, self.batch)
+        return representatives_needing_extraction(conn, after_id, self._effective_batch)
 
     # -- bookkeeping -------------------------------------------------------
     def _resume(self, conn: sqlite3.Connection) -> bool:

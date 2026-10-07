@@ -240,3 +240,52 @@ def test_a_locked_database_is_reported_not_raised(tmp_path):
     finally:
         release.set()
         holder.join(timeout=5)
+
+
+def test_import_rebases_paths_when_the_library_moved(tmp_path):
+    """The cache stores paths from where the library lived *then*.
+
+    This library moved from ``…/Chema_Photo/Photoshop`` to ``…/Photoshop``.
+    Stripping today's root marked all 450,000 rows "outside the folder", so
+    nothing imported and the scan re-read every file.
+    """
+    library = tmp_path / "Photoshop"
+    (library / "2020").mkdir(parents=True)
+    photo = library / "2020" / "IMG_0001.jpg"
+    photo.write_bytes(b"x")
+
+    legacy = tmp_path / LEGACY_DB_FILENAME
+    row = sample_row("/old/place/Chema_Photo/Photoshop/2020", "IMG_0001.jpg")
+    row["mod_time"] = photo.stat().st_mtime
+    write_legacy_db(legacy, [row])
+
+    db = library / "photo_stats.db"
+    dbmod.init_db(db)
+    conn = dbmod.connect(db)
+    report = import_legacy_cache(legacy, conn, library)
+
+    assert report.error == ""
+    assert report.imported == 1
+    assert report.skipped == 0
+    assert conn.execute("SELECT rel_path FROM photos").fetchone()[0] == "2020/IMG_0001.jpg"
+    linked = conn.execute("SELECT COUNT(*) FROM files WHERE photo_id IS NOT NULL").fetchone()[0]
+    assert linked == 1
+    conn.close()
+
+
+def test_import_skips_a_rebased_path_that_is_not_there(tmp_path):
+    """When the roots differ, a path that is not there is a guess, not a photo."""
+    library = tmp_path / "Photoshop"
+    library.mkdir()
+    legacy = tmp_path / LEGACY_DB_FILENAME
+    write_legacy_db(legacy, [sample_row("/old/place/Photoshop/2016", "gone.jpg")])
+
+    db = library / "photo_stats.db"
+    dbmod.init_db(db)
+    conn = dbmod.connect(db)
+    report = import_legacy_cache(legacy, conn, library)
+
+    assert report.imported == 0
+    assert report.skipped == 1
+    assert conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0] == 0
+    conn.close()
