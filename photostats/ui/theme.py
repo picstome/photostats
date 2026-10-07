@@ -30,11 +30,38 @@ FLORAL_WHITE = "#FFF9EC"
 #: Typeface, with a fallback stack so the app is still correct on a machine
 #: where the font is not installed.
 BRAND_FONT = "League Spartan"
-_FALLBACKS = ("Avenir Next", "Segoe UI", "Helvetica Neue", "Arial")
+#: One from each platform that ships with it: macOS and Windows first, then the
+#: Linux families. DejaVu and Liberation are on every Debian/Ubuntu image, which
+#: is what the CI runners are — naming only Arial left the runner with no
+#: installed font in the stack.
+_FALLBACKS = (
+    "Avenir Next", "Segoe UI", "Helvetica Neue", "Arial",       # macOS / Windows
+    "DejaVu Sans", "Liberation Sans", "Noto Sans", "Ubuntu",    # Linux
+)
 #: Monospace equivalents. "monospace" itself is an X11 generic that macOS and
 #: Windows do not have, and asking for it costs a font lookup every launch.
-_MONO_FALLBACKS = ("Menlo", "SF Mono", "Consolas", "Monaco", "DejaVu Sans Mono",
-                   "Courier New")
+_MONO_FALLBACKS = (
+    "Menlo", "SF Mono", "Consolas", "Monaco",                   # macOS / Windows
+    "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono",    # Linux
+    "Courier New",
+)
+
+
+def _resolve_families(candidates, installed, last_resort: str) -> list[str]:
+    """The installed families among *candidates*, in order.
+
+    Never returns a name that is not installed — naming a missing family is
+    exactly what makes Qt log its font-alias warning — unless the machine (or a
+    test passing an empty list) reports no families at all, where the result
+    has to be *something*.
+    """
+    families = set(installed)
+    chosen = [name for name in candidates if name in families]
+    if chosen:
+        return chosen
+    # Nothing on the list is here: take any real family rather than a guess.
+    real = sorted(name for name in families if not name.startswith("."))
+    return real[:1] or [last_resort]
 
 
 def font_stack(installed: Iterable[str] | None = None) -> str:
@@ -51,12 +78,7 @@ def font_stack(installed: Iterable[str] | None = None) -> str:
         from PySide6.QtGui import QFontDatabase
 
         installed = QFontDatabase.families()
-    families = set(installed)
-    available = [name for name in (BRAND_FONT, *_FALLBACKS) if name in families]
-    if not available:
-        available = [_FALLBACKS[-1]]
-    # No trailing generic: "sans-serif" is itself resolved through the same
-    # alias machinery, and Arial is always installed as the last resort anyway.
+    available = _resolve_families((BRAND_FONT, *_FALLBACKS), installed, _FALLBACKS[-1])
     return ", ".join(f'"{name}"' for name in available)
 
 
@@ -159,9 +181,8 @@ def mono_stack(installed: Iterable[str] | None = None) -> str:
         from PySide6.QtGui import QFontDatabase
 
         installed = QFontDatabase.families()
-    families = set(installed)
-    chosen = [name for name in _MONO_FALLBACKS if name in families]
-    return '"%s"' % (chosen[0] if chosen else "Courier New")
+    chosen = _resolve_families(_MONO_FALLBACKS, installed, "Courier New")
+    return ", ".join(f'"{name}"' for name in chosen)
 
 
 def apply_base_font(app) -> str:

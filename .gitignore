@@ -20,7 +20,6 @@ htmlcov/
 # Packaging output
 build/work/
 dist/
-build/assets/icon.icns
 
 # Editors and OS
 .DS_Store
