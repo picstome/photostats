@@ -275,11 +275,10 @@ class RangeSlider(QWidget):
         event.ignore()
 
     def keyPressEvent(self, event) -> None:  # noqa: D102, N802
-        step = self._step()
         if event.key() == Qt.Key_Left:
-            self._nudge(-step, +step)
+            self._nudge(-1, +1)
         elif event.key() == Qt.Key_Right:
-            self._nudge(+step, -step)
+            self._nudge(+1, -1)
         elif event.key() == Qt.Key_Home:
             self.set_range(self.minimum, self.high, emit=True)
         elif event.key() == Qt.Key_End:
@@ -289,16 +288,24 @@ class RangeSlider(QWidget):
         else:
             super().keyPressEvent(event)
 
-    def _step(self) -> float:
-        if self.log:
-            return (self.maximum - self.minimum) / 60
-        return (self.maximum - self.minimum) / 100
+    def _nudge(self, low_step: int, high_step: int) -> None:
+        """Move each handle by *low_step* / *high_step* notches.
 
-    def _nudge(self, low_delta: float, high_delta: float) -> None:
+        A logarithmic track moves by a factor, not a fixed amount: adding 26 to
+        an 8mm handle and to a 1600mm one are not the same step, and the fixed
+        step was so coarse on a wide focal range that the arrows were useless.
+        A linear track keeps a plain one-percent step.
+        """
         low = self.low if self.low is not None else self.minimum
         high = self.high if self.high is not None else self.maximum
-        new_low = _round(low + low_delta, self.log)
-        new_high = _round(high + high_delta, self.log)
+        if self.log:
+            factor = 1.1 ** low_step
+            new_low = _round(low * factor, True)
+            new_high = _round(high * (1.1 ** high_step), True)
+        else:
+            unit = (self.maximum - self.minimum) / 100
+            new_low = _round(low + unit * low_step, False)
+            new_high = _round(high + unit * high_step, False)
         if new_low > new_high:
             new_low, new_high = new_high, new_low
         self.set_range(

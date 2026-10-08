@@ -387,8 +387,15 @@ class PhotoStore:
         years like 2000 and 2100.
         """
         row = self.conn.execute(
-            "SELECT MIN(iso), MAX(iso), MIN(shutter_seconds), MAX(shutter_seconds), "
-            "MIN(fnumber), MAX(fnumber), MIN(focal_mm), MAX(focal_mm), "
+            # The minimum ignores values a camera wrote but that are not real
+            # settings: some bodies store a focal length or f-number of 0 when
+            # they do not know it, and a single 0 turned the focal slider into a
+            # 0–1600 log track whose handle read "3.6e-06mm". The maxima are left
+            # alone — a real 1600mm lens is a real 1600mm.
+            "SELECT MIN(CASE WHEN iso >= 1 THEN iso END), MAX(iso), "
+            "MIN(CASE WHEN shutter_seconds > 0 THEN shutter_seconds END), MAX(shutter_seconds), "
+            "MIN(CASE WHEN fnumber >= 0.5 THEN fnumber END), MAX(fnumber), "
+            "MIN(CASE WHEN focal_mm >= 1 THEN focal_mm END), MAX(focal_mm), "
             "MIN(taken_at), MAX(taken_at) FROM photos"
         ).fetchone()
         return {

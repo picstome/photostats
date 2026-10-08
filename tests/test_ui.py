@@ -811,6 +811,20 @@ def test_selecting_one_camera_leaves_every_lens_selectable(window, library, app)
 
 # -- slider labels are real photographic values ---------------------------
 
+def test_a_log_slider_steps_by_a_factor_not_a_fixed_amount(window, library):
+    """A fixed step is useless across a wide focal range: the old one moved the
+    handle by (max-min)/60 — a nudge at 1600mm, a leap at 8mm. Log tracks move
+    by a proportion, so every notch is the same size to the eye."""
+    slider = window.filter_panel.slider_focal
+    slider.set_bounds(8, 1600)
+    slider.set_range(100, 400, emit=False)
+
+    slider._nudge(+1, -1)  # narrow by one notch
+
+    assert slider.low == pytest.approx(110, rel=0.02)          # 100 * 1.1
+    assert slider.high == pytest.approx(400 / 1.1, rel=0.02)   # 400 / 1.1
+
+
 def test_slider_ticks_are_values_from_the_series(window, library):
     from photostats.ui.panels.filter_panel import FACET_TICKS
 

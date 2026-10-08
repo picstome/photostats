@@ -240,6 +240,24 @@ def test_ranges_seed_the_sliders(store):
     assert ranges["focal"][0] < ranges["focal"][1]
 
 
+def test_ranges_ignore_a_zero_focal_and_fnumber(store):
+    """A camera that wrote 0 for a value it did not know must not set the track.
+
+    One 0 focal length turned the focal slider into a 0-1600 log track whose
+    handle read "3.6e-06mm"; the same for f-number.
+    """
+    from photostats.core import db as dbmod
+
+    conn = dbmod.connect(store.db_path)
+    conn.execute("INSERT INTO photos (rel_path, focal_mm, fnumber) VALUES ('zero.jpg', 0, 0)")
+    conn.commit()
+    conn.close()
+
+    ranges = store.ranges()
+    assert ranges["focal"][0] >= 1
+    assert ranges["aperture"][0] >= 0.5
+
+
 def test_ranges_include_the_library_date_span(store):
     """The date pickers need the oldest day in the library, as a real date."""
     oldest, newest = store.ranges()["date"]
