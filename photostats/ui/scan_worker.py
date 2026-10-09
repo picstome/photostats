@@ -33,16 +33,25 @@ class ScanWorker(QThread):
         self._indexer: Indexer | None = None
 
     def run(self) -> None:  # noqa: D102 - Qt entry point
-        self._indexer = Indexer(
-            self.db_path,
-            self.root,
-            exiftool_path=self.config.exiftool_path or None,
-            workers=self.config.workers,
-            batch=self.config.batch_size,
-            on_progress=self.progress.emit,
-            on_log=self.log.emit,
-        )
-        self.finished_scan.emit(self._indexer.run())
+        from ..core.indexer import Indexer, IndexResult
+
+        result = IndexResult()
+        try:
+            self._indexer = Indexer(
+                self.db_path,
+                self.root,
+                exiftool_path=self.config.exiftool_path or None,
+                workers=self.config.workers,
+                batch=self.config.batch_size,
+                on_progress=self.progress.emit,
+                on_log=self.log.emit,
+            )
+            result = self._indexer.run()
+        except Exception as exc:  # a dead thread must still answer the window
+            self.log(f"the scan failed: {exc}")
+            result.message = str(exc)
+            result.ok = False
+        self.finished_scan.emit(result)
 
     def cancel(self) -> None:
         if self._indexer is not None:

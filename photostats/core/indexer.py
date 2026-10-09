@@ -225,7 +225,7 @@ class Indexer:
             result.errors = self._errors
             self._emit(phase=PHASE_DONE, force=True)
             return result
-        except (sqlite3.Error, OSError) as exc:
+        except Exception as exc:
             dbmod.checkpoint(conn)
             result.message = str(exc)
             self.log(f"Scan failed: {exc}")
@@ -371,7 +371,16 @@ class Indexer:
                 ).fetchone()
                 if info is None:
                     continue
-                row = build_photo_row(meta, rel_path, info["ext"], info["mod_time"], info["size"])
+                try:
+                    row = build_photo_row(meta, rel_path, info["ext"], info["mod_time"],
+                                          info["size"])
+                except Exception as exc:
+                    # One file with a value the parser cannot handle must not
+                    # take the whole scan down: skip it and keep the other
+                    # thousands in the batch.
+                    self._errors += 1
+                    self.log(f"could not read the metadata of {rel_path}: {exc}")
+                    continue
                 photo_id = existing.get(rel_path)
                 if photo_id is None:
                     photo_id = conn.execute(dbmod.PHOTO_INSERT_SQL, row).lastrowid

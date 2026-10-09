@@ -353,3 +353,34 @@ def test_a_slow_drive_shrinks_the_read_batch(tmp_path):
     indexer._read_with(AlwaysTimesOut(), batch)
 
     assert indexer._effective_batch == 50  # 250 // 5, the size that works
+
+
+def test_one_unparseable_file_does_not_kill_the_scan(tmp_path, monkeypatch):
+    """A value the parser cannot handle must cost one file, not the whole scan.
+
+    A single file whose camera came back as a number raised a TypeError out of
+    the worker thread and crashed the app; now it is skipped and counted.
+    """
+    from photostats.core import indexer as indexer_mod
+    from photostats.core.indexer import Indexer
+
+    root = tmp_path / "photos"
+    make_library(root, count=12)
+    db = root / "photo_stats.db"
+    init_db(db)
+
+    real = indexer_mod.build_photo_row
+    seen = {"n": 0}
+
+    def flaky(meta, rel_path, *args, **kwargs):
+        seen["n"] += 1
+        if seen["n"] == 3:
+            raise TypeError("expected string or bytes-like object, got 'int'")
+        return real(meta, rel_path, *args, **kwargs)
+
+    monkeypatch.setattr(indexer_mod, "build_photo_row", flaky)
+    result = Indexer(db, root).run()
+
+    assert result.ok, result.message
+    assert result.errors >= 1
+    assert result.photos == 11  # 12 shots, minus the one that could not be parsed

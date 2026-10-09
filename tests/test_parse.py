@@ -8,6 +8,7 @@ from photostats.core.db import PHOTO_COLUMNS
 from photostats.core.parse import (
     build_photo_row,
     clean_camera,
+    clean_lens,
     format_fnumber,
     format_shutter,
     normalize_key,
@@ -145,6 +146,17 @@ def test_clean_camera_removes_duplicated_brand():
     assert clean_camera("Canon") == "Canon"
     assert clean_camera(None) is None
     assert clean_camera("   ") is None
+
+
+def test_clean_camera_and_lens_survive_a_number():
+    """exiftool sometimes returns a number for a normally-text field.
+
+    Running the whitespace regex on an int raised "expected string or
+    bytes-like object, got 'int'", which killed a whole scan.
+    """
+    assert clean_camera(123) == "123"
+    assert clean_lens(50) == "50"
+    assert normalize_key(50) == "50"
 
 
 def test_normalize_key_is_case_and_space_insensitive():

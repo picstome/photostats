@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -104,8 +105,15 @@ def install_excepthook(logger: logging.Logger) -> None:
         logger.critical("Unhandled error", exc_info=(exc_type, exc_value, exc_tb))
         from PySide6.QtWidgets import QApplication, QMessageBox
 
+        # Only the main thread may build a window. An exception in a worker
+        # thread (a scan, a query) reaches here through PyErr_Print, and the
+        # old code then created a QMessageBox on that thread — which macOS
+        # aborts on, turning a recoverable scan error into a hard crash. Off
+        # the main thread this only logs.
         signature = (exc_type, str(exc_value))
-        if QApplication.instance() is not None and signature not in reported:
+        on_main_thread = threading.current_thread() is threading.main_thread()
+        if (on_main_thread and QApplication.instance() is not None
+                and signature not in reported):
             reported.add(signature)
             box = QMessageBox()
             box.setIcon(QMessageBox.Critical)

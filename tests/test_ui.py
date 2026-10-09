@@ -1592,3 +1592,32 @@ def test_the_status_bar_uses_one_size_for_its_message(window):
         window.status_label.objectName())
     assert window.status_label.objectName() == "statusText"
     assert window.cache_label.objectName() == "statusMeta"
+
+
+def test_a_worker_thread_error_does_not_build_a_window(app):
+    """macOS aborts when a window is made off the main thread.
+
+    A scan error reached sys.excepthook on the worker thread, which then built a
+    QMessageBox and killed the app. Off the main thread it must only log.
+    """
+    import logging
+    import sys
+    import threading
+
+    from photostats import app as appmod
+
+    original = sys.excepthook
+    appmod.install_excepthook(logging.getLogger("photostats.test"))
+    try:
+        def boom() -> None:
+            try:
+                raise TypeError("expected string or bytes-like object, got 'int'")
+            except TypeError:
+                sys.excepthook(*sys.exc_info())
+
+        worker = threading.Thread(target=boom)
+        worker.start()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+    finally:
+        sys.excepthook = original

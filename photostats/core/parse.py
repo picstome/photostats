@@ -151,15 +151,20 @@ def normalize_key(value: str | None) -> str | None:
     """Case/punctuation-insensitive key used to merge near-identical gear names."""
     if not value:
         return None
-    text = _WS_RE.sub(" ", value).strip().casefold()
+    text = _WS_RE.sub(" ", str(value)).strip().casefold()
     return text or None
 
 
 def clean_camera(value: str | None) -> str | None:
-    """Drop the duplicated brand some vendors write ('NIKON NIKON Z8')."""
+    """Drop the duplicated brand some vendors write ('NIKON NIKON Z8').
+
+    Coerced with ``str`` first: exiftool sometimes returns a number for a field
+    that is normally text, and running the whitespace regex on an int raised
+    "expected string or bytes-like object, got 'int'" and killed the scan.
+    """
     if not value:
         return None
-    text = _WS_RE.sub(" ", value).strip()
+    text = _WS_RE.sub(" ", str(value)).strip()
     if not text:
         return None
     words = text.split(" ")
@@ -171,7 +176,7 @@ def clean_camera(value: str | None) -> str | None:
 def clean_lens(value: str | None) -> str | None:
     if not value:
         return None
-    return _WS_RE.sub(" ", value).strip() or None
+    return _WS_RE.sub(" ", str(value)).strip() or None
 
 
 def normalize_white_balance(value: Any) -> str | None:
