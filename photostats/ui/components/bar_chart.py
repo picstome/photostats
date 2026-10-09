@@ -8,7 +8,7 @@ mapped back to filter values without an overlay.
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
+from PySide6.QtGui import QColor, QFontMetrics, QPainter
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ...core.queries import FacetResult
@@ -155,7 +155,11 @@ class BarChart(QWidget):
 
         buckets = self.buckets()
         peak = max((b.share for b in buckets), default=1.0) or 1.0
+        # Measured once for the whole repaint, not once per row: each of these
+        # walks every label with the font metrics, so calling them inside the
+        # loop made painting quadratic — and painting happens on every hover.
         count_w = self._count_width()
+        label_w = self._label_width()
         air = 10
         for index, bucket in enumerate(buckets):
             top = PADDING + index * ROW_HEIGHT
@@ -167,16 +171,11 @@ class BarChart(QWidget):
 
             is_selected = str(bucket.label) in self.selected
             text_color = QColor(self.theme.text if is_selected else self.theme.text_dim)
-            label_w = self._label_width()
             label_rect = QRectF(PADDING, top, label_w - 8, ROW_HEIGHT)
             label = metrics.elidedText(str(bucket.label), Qt.ElideRight, int(label_w - 10))
             painter.setPen(text_color)
             painter.drawText(label_rect, Qt.AlignVCenter | Qt.AlignLeft, label)
 
-            count_w = self._count_width()
-            # Ten pixels of air between a full bar and its figures; six felt
-            # like the count was leaning on the bar's end.
-            air = 10
             track = QRectF(PADDING + label_w, top + (ROW_HEIGHT - BAR_HEIGHT) / 2,
                            max(TRACK_MIN, self.width() - label_w - count_w - PADDING * 2 - air),
                            BAR_HEIGHT)
@@ -250,37 +249,3 @@ class BarChart(QWidget):
         if y < PADDING or y > PADDING + len(self.buckets()) * ROW_HEIGHT:
             return -1
         return int((y - PADDING) // ROW_HEIGHT)
-
-
-class DonutChart(QWidget):
-    """Small ring used for the filtered/total proportion."""
-
-    def __init__(self, theme, parent=None) -> None:
-        super().__init__(parent)
-        self.theme = theme
-        self._value = 0.0
-        self._label = ""
-        self.setFixedSize(52, 52)
-
-    def set_value(self, fraction: float, label: str = "") -> None:
-        self._value = max(0.0, min(1.0, fraction))
-        self._label = label
-        self.update()
-
-    def paintEvent(self, event) -> None:  # noqa: D102, N802
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        size = min(self.width(), self.height()) - 6
-        rect = QRectF((self.width() - size) / 2, (self.height() - size) / 2, size, size)
-        pen = QPen(self._color(self.theme.bar_bg), 5)
-        painter.setPen(pen)
-        painter.drawArc(rect.adjusted(3, 3, -3, -3), 0, 360 * 16)
-        if self._value > 0:
-            painter.setPen(QPen(self._color(self.theme.accent), 5, Qt.SolidLine, Qt.RoundCap))
-            painter.drawArc(rect.adjusted(3, 3, -3, -3), 90 * 16, -int(360 * 16 * self._value))
-        painter.setPen(self._color(self.theme.text))
-        font = painter.font()
-        font.setPointSizeF(max(7.0, font.pointSizeF() * 0.8))
-        painter.setFont(font)
-        painter.drawText(rect, Qt.AlignCenter, self._label or f"{self._value * 100:.0f}%")
-        painter.end()

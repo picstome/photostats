@@ -116,11 +116,6 @@ class AppConfig:
         return self.paths.db_path(
             Path(folder) if folder else None, self.cache_mode, Path(custom) if custom else None
         )
-
-    @property
-    def cache_is_portable(self) -> bool:
-        return self.cache_mode == CACHE_NEXT_TO_PHOTOS
-
     def set_cache(self, mode: str, custom: str = "") -> None:
         self.settings.setValue("cache_mode", mode)
         if custom:

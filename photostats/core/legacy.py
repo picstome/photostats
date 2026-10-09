@@ -236,9 +236,3 @@ _RAW = {
     "mos", "mraw", "mrw", "nef", "nrw", "orf", "pef", "raf", "raw", "rw2", "rwl",
     "rwz", "sr2", "srf", "srw", "x3f",
 }
-
-
-def _insert_sql() -> str:
-    from .db import PHOTO_INSERT_SQL
-
-    return PHOTO_INSERT_SQL

@@ -204,13 +204,57 @@ Run the tests and linter:
 ```bash
 QT_QPA_PLATFORM=offscreen pytest -q
 ruff check photostats tests
+python -m photostats --audit-translations     # both catalogues complete?
 ```
 
-Build a distributable bundle (each platform builds on its own runner):
+### Project layout
 
-```bash
-pyinstaller build/photostats.spec --noconfirm
 ```
+run_photostats.py          entry point for the frozen binary
+photostats/
+├── core/                  no Qt: usable from the CLI, and unit-testable
+│   ├── scanner.py     walk the tree, group RAW+JPEG, diff the cache
+│   ├── indexer.py     phase B: read metadata in parallel, resumable
+│   ├── exiftool.py    one persistent `exiftool -stay_open` per worker
+│   ├── queries.py     cross-filtered facets, timeline, paging
+│   ├── filters.py     the filter model and its translation into SQL
+│   ├── insights.py    the sentences above the charts
+│   ├── updates.py     the monthly GitHub Releases check
+│   └── export.py      CSV / JSON / text
+└── ui/                    PySide6; never touches SQLite directly
+    ├── main_window.py     layout, query threading, scan/import orchestration
+    ├── theme.py           the five brand colours → light and dark themes
+    ├── styles.py          per-widget QSS
+    └── components/, panels/
+```
+
+Full architecture notes, the cross-filtering model and the resilience rules are
+in [docs/how-it-works.md](docs/how-it-works.md).
+
+### Safety rules the code holds to
+
+These are enforced in code, not by convention, and several are pinned by tests:
+
+- **Every value reaches SQLite as a parameter.** The only interpolated
+  identifiers are column names checked against an allowlist
+  (`PhotoStore.ALLOWED_DISTINCT_COLUMNS`) or drawn from a fixed dict
+  (`_sort_clause`), so nothing a user types or a folder is named can reach the
+  query as SQL.
+- **Nothing is handed to a shell.** exiftool is driven through `-@ -`, reading
+  its arguments from stdin one per line, so spaces and accents in a file name
+  are ordinary characters and cannot become commands.
+- **Paths from the cache are re-checked before use.** The database is portable,
+  so a `rel_path` copied from another machine is joined through
+  `MainWindow._safe_join` and refused if it escapes the library.
+- **A single bad file costs one file, not the scan.** Metadata parsing is guarded
+  per row, exiftool retries split a failing batch, and the batch size shrinks
+  automatically when a drive cannot keep up.
+- **Nothing is built off the main thread.** The crash reporter logs on a worker
+  thread and only opens a dialog on the GUI thread, because macOS aborts on a
+  window created anywhere else.
+- **The only network call is the update check.** One GET to the public GitHub
+  API, at most once a month, with no token and no telemetry. It is off if you
+  turn it off in Settings.
 
 ### Building a release
 

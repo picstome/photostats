@@ -140,3 +140,77 @@ Deleting `photo_stats.db` is always safe: it just means the next scan reads the
 metadata again.
 
 See [schema.md](schema.md) for the full table layout.
+
+## Updates
+
+Photo Stats asks the GitHub Releases API **at most once a month** for the latest
+tag and compares it, as a tuple of ints, with `__version__`. When it is newer the
+window shows a banner whose **Download** button opens the asset built for the
+running platform (the archive's file names are matched by `asset_name()`), or the
+release page if the release carries none.
+
+The rules that keep it quiet and cheap:
+
+- the gap is stored in the app settings as an ISO timestamp, and written *before*
+  the request — so a machine that is offline at check time waits the full month
+  rather than retrying on every launch;
+- every failure is silent: no network, a rate limit, unexpected JSON or a missing
+  field all return `None`, because being offline is not an error worth a dialog;
+- one `GET`, no token, no telemetry, and it can be turned off in Settings.
+
+## Resilience
+
+The app is used on libraries that are large, on external drives, and full of
+files no tool can read. A few rules follow from that, each one learned the hard
+way:
+
+- **One bad file costs one file.** `build_photo_row` is called inside a guard in
+  `Indexer._write_batch`; a value the parser cannot handle is counted, logged and
+  skipped instead of killing the batch.
+- **A failing batch is halved, not retried.** `Indexer._read_with` splits a batch
+  on failure, down to single files, so a slow drive or one unreadable file loses
+  one photo rather than 250.
+- **The read batch adapts to the drive.** When a batch times out, the size asked
+  for subsequent batches drops (a fifth, floor 10). A library on a slow USB drive
+  used to time out on every single batch, because `workers × batch` files in
+  flight is more than the drive can serve.
+- **Nothing is built off the main thread.** The crash reporter logs on a worker
+  thread and only opens a dialog on the GUI thread, because macOS aborts on a
+  window created anywhere else. Work threads catch broadly and always emit a
+  result, so a failure reaches the window instead of leaving it on
+  "Importing…" forever.
+- **exiftool's stderr is drained as it goes.** Nothing reads it until something
+  fails, and exiftool writes one line per unreadable file — on a library with
+  thousands of those, the queue used to grow for the whole scan.
+- **Cleaners accept non-strings.** exiftool sometimes returns a number for a
+  field that is normally text; the regex-based cleaners coerce with `str()`
+  before matching.
+
+## Tests
+
+```bash
+QT_QPA_PLATFORM=offscreen pytest -q     # all platforms, headless
+```
+
+The suite is deliberately ordinary — no display, no network, no real library:
+
+- `tests/conftest.py` builds a synthetic library by stamping EXIF onto a 1×1
+  JPEG with exiftool, so the tests exercise the same code path as a real scan
+  without needing photographs.
+- `tests/test_ui.py` drives the real `MainWindow` offscreen: opening a library,
+  filtering, the scan lifecycle, the charts, the calendar, the update banner.
+- `tests/test_indexing.py` covers caching, crash/resume and the resilience rules
+  — including that a scan survives a file whose parse fails.
+- `tests/test_filters.py` pins `facet_active()` to `to_sql()`'s `omit` behaviour,
+  which is what keeps a share from ever being computed against the wrong total.
+- `tests/test_updates.py` replaces `urllib` with a fake response, so the update
+  check is tested without a network.
+- `tests/test_indexing.py` also guards the release artefacts: the icons exist,
+  the spec bundles the translation catalogues (a build without them showed the
+  raw key — the window title read `Photo Stats by {author}`).
+
+## Changing the schema
+
+Bump `SCHEMA_VERSION` in `core/db.py` and add a forward migration block to
+`_migrate()`. Every stored row is written in the same transaction as the progress
+that got it there, so an interrupted scan resumes rather than double-counting.

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -274,6 +272,3 @@ class SettingsDialog(QDialog):
         self.config.set_updates_enabled(self.check_updates.isChecked())
         self.config.set_language(self.language_box.currentData())
         self.config.sync()
-
-    def cache_path_preview(self) -> Path:
-        return self.config.db_path(Path(self.custom_path.text() or "~").expanduser())

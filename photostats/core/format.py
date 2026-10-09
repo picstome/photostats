@@ -58,8 +58,3 @@ def row_to_dict(row) -> dict:
         "path": rel_path,
     }
 
-
-def facet_label(value, formatter=None) -> str:
-    if formatter:
-        return formatter(value)
-    return str(value)

@@ -228,6 +228,11 @@ class ExifTool:
         lines: list[str] = []
         deadline = time.monotonic() + self.timeout
         while True:
+            # Drain stderr as we go. Nothing else reads it until something goes
+            # wrong, and exiftool writes a line per unreadable file — a library
+            # with thousands of those was growing this queue unbounded, for the
+            # whole scan, for nothing but a diagnostic nobody asked for.
+            self._drain_stderr()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 self._fail(f"exiftool timed out after {self.timeout:.0f}s")

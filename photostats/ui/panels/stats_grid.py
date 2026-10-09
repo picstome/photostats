@@ -174,7 +174,6 @@ class StatsGrid(QWidget):
 
     bar_clicked = Signal(str, str)
     selection_cleared = Signal(str)
-    show_all_requested = Signal(str)
 
     def __init__(self, theme, parent=None) -> None:
         super().__init__(parent)

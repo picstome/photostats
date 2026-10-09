@@ -33,17 +33,6 @@ class WalkStats:
     directories: int = 0
     bytes_seen: int = 0
 
-    def as_dict(self) -> dict[str, int]:
-        return {
-            "files": self.files,
-            "new": self.new,
-            "updated": self.updated,
-            "cached": self.cached,
-            "removed": self.removed,
-            "errors": self.errors,
-            "directories": self.directories,
-        }
-
 
 @dataclass
 class WalkEvent:

@@ -170,10 +170,6 @@ def _split_emphasis(insight) -> tuple[str, str]:
     return emphasis or "", text
 
 
-def _escape(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
 class WelcomeScreen(QWidget):
     """Shown until a folder is opened: one obvious thing to do."""
 

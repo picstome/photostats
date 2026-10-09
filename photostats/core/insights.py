@@ -206,12 +206,6 @@ class Insights:
         return None
 
 
-def facet_summary_line(result, top: int = 3) -> str:
-    """'NIKON Z8 61% · Canon R6 24% · Sony 9%' — used by the CLI and exports."""
-    parts = [f"{b.label} {b.share * 100:.0f}%" for b in result.buckets[:top] if b.share > 0]
-    return " · ".join(parts)
-
-
 def _runner_ups(runners_up, percent: int) -> str:
     """'Canon R6 14% · Sony 9%' — the runners-up worth mentioning."""
     return " · ".join(

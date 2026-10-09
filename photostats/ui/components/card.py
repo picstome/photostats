@@ -82,9 +82,6 @@ class Section(QWidget):
         self.header.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
         self.body.setVisible(expanded)
 
-    def set_header_text(self, text: str) -> None:
-        self.header.setText(text)
-
 
 class Chip(QLabel):
     """A removable filter pill shown above the charts."""
@@ -136,9 +133,6 @@ class StatTile(QFrame):
         self.caption.setStyleSheet(f"color: {theme.text_faint}; font-size: 11px;")
         layout.addWidget(self.value)
         layout.addWidget(self.caption)
-
-    def set_value(self, text: str) -> None:
-        self.value.setText(text)
 
 
 class Divider(QFrame):

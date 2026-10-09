@@ -300,16 +300,6 @@ def format_focal(value: float | None) -> str:
     return "—" if value is None else f"{value:g}mm"
 
 
-def format_resolution(width: int | None, height: int | None) -> str:
-    if not width or not height:
-        return "—"
-    return f"{width}×{height}"
-
-
-def format_megapixels(value: float | None) -> str:
-    return "—" if value is None else f"{value:.1f} MP"
-
-
 # ---------------------------------------------------------------------------
 # Row construction
 # ---------------------------------------------------------------------------
