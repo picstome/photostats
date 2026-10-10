@@ -48,14 +48,6 @@ EXIFTAGS = [
     "OffsetTimeOriginal",
 ]
 
-_EXIFTOOL_ARGS = [
-    *[f"-{tag}" for tag in EXIFTAGS],
-    "-api",
-    "largefilesupport=1",
-    "-charset",
-    "filename=UTF8",
-]
-
 _NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
 _FRACTION_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)$")
 _WS_RE = re.compile(r"\s+")

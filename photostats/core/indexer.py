@@ -65,6 +65,13 @@ DEFAULT_BATCH = 50
 #: larger batch sizes, so this stays close to the core count rather than above.
 DEFAULT_WORKERS = min(12, max(2, (os.cpu_count() or 4) - 2))
 _PROGRESS_INTERVAL = 0.25
+#: How much recent history the "files per second" figure is measured over, so
+#: the time left follows the disk's speed right now instead of an average taken
+#: over the whole run — which used to include the walk, a phase measured in
+#: directories per second, and never reacted when the drive sped up or slowed.
+#: Long enough that a burst of small files does not make the estimate jump;
+#: short enough that a changing drive speed is followed within seconds.
+_RATE_WINDOW = 15.0
 
 
 @dataclass
@@ -157,6 +164,12 @@ class Indexer:
         self._errors = 0
         self._started = 0.0
         self._last_emit = 0.0
+        #: Rate bookkeeping; see _rate_over. _phase_started is when the current
+        #: phase began, and _rate_samples is the (time, files-done) history the
+        #: rolling window is computed from.
+        self._phase = ""
+        self._phase_started = 0.0
+        self._rate_samples: list[tuple[float, int]] = []
         self.stats = WalkStats()
 
     # -- control -----------------------------------------------------------
@@ -440,6 +453,14 @@ class Indexer:
         if self._on_progress is None:
             return
         now = time.monotonic()
+        # A phase change (walk finished, extracting begins) starts a new window:
+        # the walk's rate is measured in directories a second and says nothing
+        # about reading metadata, so carrying it over made the very first
+        # reading estimate badly wrong.
+        if phase != self._phase:
+            self._phase = phase
+            self._phase_started = now
+            self._rate_samples.clear()
         if not force and now - self._last_emit < _PROGRESS_INTERVAL:
             return
         self._last_emit = now
@@ -457,11 +478,38 @@ class Indexer:
             errors=self._errors or self.stats.errors,
         )
         progress.elapsed = now - self._started
-        if progress.elapsed > 0.4:
-            progress.rate = progress.indexed / progress.elapsed
-            if progress.rate > 0 and progress.pending:
-                progress.eta = progress.pending / progress.rate
+        progress.rate = self._rate_over(now, progress.indexed)
+        if progress.rate > 0 and progress.pending:
+            progress.eta = progress.pending / progress.rate
         self._on_progress(progress)
+
+    def _rate_over(self, now: float, indexed: int) -> float:
+        """Files per second over the recent past — not since the scan began.
+
+        This used to be ``indexed / elapsed`` from the start of the run, which
+        was useless twice over: the walk of a large library runs for minutes and
+        lands in the same total, so the number was anchored to work already
+        finished; and on an external drive the throughput swings by an order of
+        magnitude between the first cold files and a warm cache, so an average
+        taken over the whole run never follows what the disk is doing now.
+
+        A window of the last few seconds is what someone asking "how long is
+        left" is actually asking about. Until there is history inside the
+        window, fall back to the phase and then to the run, so the very first
+        estimate is still a whole-run average rather than a guess.
+        """
+        self._rate_samples.append((now, indexed))
+        self._rate_samples = [s for s in self._rate_samples if now - s[0] <= _RATE_WINDOW]
+        first_time, first_count = self._rate_samples[0]
+        span = now - first_time
+        done = indexed - first_count
+        if span > 0 and done > 0:
+            return done / span
+        for start in (self._phase_started, self._started):
+            elapsed = now - start
+            if elapsed > 0.4 and indexed > 0:
+                return indexed / elapsed
+        return 0.0
 
     @property
     def _walk_files(self) -> int:

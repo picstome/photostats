@@ -384,3 +384,86 @@ def test_one_unparseable_file_does_not_kill_the_scan(tmp_path, monkeypatch):
     assert result.ok, result.message
     assert result.errors >= 1
     assert result.photos == 11  # 12 shots, minus the one that could not be parsed
+
+
+def _tag_keys(tool, paths, args):
+    """The tag names exiftool returned, as a set."""
+    import json
+
+    raw = tool.execute(["-j", *args, *[str(p) for p in paths]])
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = json.loads(raw[raw.find("["):])
+    keys: set[str] = set()
+    for record in data:
+        if isinstance(record, dict):
+            keys.update(record)
+    return keys
+
+
+def test_the_fast_flag_costs_no_tags(tmp_path):
+    """exiftool's faster scanning modes trade metadata for speed — except one.
+
+    ``-fast`` (level 1) only stops the scan for trailer information past the
+    image, and measurably halves the read time on the library this app is used
+    on. ``-fast2`` and above drop EXIF MakerNotes, which is where several bodies
+    keep the lens model — it lost Lens and LensType on JPEGs in testing — so the
+    flags are pinned to level 1 by this test rather than by convention.
+    """
+    from photostats.core.exiftool import EXIFTAG_ARGS, ExifTool, find_exiftool
+
+    exe = find_exiftool()
+    if not exe:
+        pytest.skip("exiftool is not installed")
+
+    root = tmp_path / "photos"
+    make_library(root, count=6)
+    paths = sorted(root.rglob("*.jpg"))[:6]
+    without_fast = [arg for arg in EXIFTAG_ARGS if arg != "-fast"]
+
+    assert "-fast" in EXIFTAG_ARGS, "the fast flag is what this test pins"
+    with ExifTool(exe) as tool:
+        baseline = _tag_keys(tool, paths, without_fast)
+        with_fast = _tag_keys(tool, paths, EXIFTAG_ARGS)
+
+    lost = baseline - with_fast
+    assert not lost, f"-fast would lose {sorted(lost)}"
+    assert baseline, "the fixtures produced no EXIF to compare"
+
+
+def test_the_time_left_follows_the_current_speed(tmp_path, monkeypatch):
+    """The estimate is measured over the last few seconds, not the whole run.
+
+    It used to be files-divided-by-total-elapsed, which was wrong twice: the
+    walk of a large library runs for minutes and lands in the same total, and on
+    an external drive the throughput swings by an order of magnitude — so the
+    answer never followed what the disk was doing at the moment.
+    """
+    from photostats.core import indexer as indexer_mod
+
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(indexer_mod.time, "monotonic", lambda: clock["t"])
+
+    progress = []
+    idx = indexer_mod.Indexer(tmp_path / "photo_stats.db", tmp_path)
+    idx._total = 100_000
+    idx._on_progress = progress.append
+    idx._started = clock["t"]
+
+    # A slow start, then a fast burst, then a crawl: only the crawl should
+    # decide the figure once it is inside the window.
+    for elapsed, read in ((20.0, 0), (15.0, 1_900), (15.0, 1_950)):
+        clock["t"] += elapsed
+        idx._read = read
+        idx._emit(indexer_mod.PHASE_EXTRACT)
+
+    rate = progress[-1].rate
+    assert rate == pytest.approx(50 / 15, rel=0.05), (
+        f"rate was {rate:.2f}/s; it should reflect the last "
+        f"{indexer_mod._RATE_WINDOW:.0f}s only"
+    )
+    # And the old whole-run figure would have been much more optimistic.
+    whole_run = progress[-1].indexed / progress[-1].elapsed
+    assert rate < whole_run / 2, "the estimate is still averaging the whole run"
+    assert progress[-1].eta > 0

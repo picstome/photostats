@@ -62,6 +62,35 @@ materialised aggregate tables rather than live `GROUP BY`.
 > that tells you a command finished, and the reader blocks forever. The driver in
 > `core/exiftool.py` refuses `-q` for exactly this reason.
 
+## Reading exif data is I/O work
+
+On a library on an external drive, nearly all the time in a first scan is the
+drive delivering the file, not exiftool parsing it. Two things follow, and both
+are measured rather than assumed.
+
+**`-fast` (exiftool level 1) is worth about 1.7×, and costs nothing.** It stops
+exiftool scanning past the end of the image for trailing data it does not use.
+The faster levels are not free: `-fast2` also skips EXIF MakerNotes, which is
+where several bodies keep the lens model — it loses `Lens` and `LensType` on
+JPEGs — and above that whole tags disappear.
+`tests/test_indexing.py::test_the_fast_flag_costs_no_tags` pins flag to tag set
+so a later "just try `-fast5`" cannot quietly empty the lens chart.
+
+**More workers help only until they thrash the drive.** `workers × batch` is the
+number of files being read at once, and a drive has a ceiling well below what a
+fast cores count suggests: on the 9 TB exFAT volume this app was tuned against,
+16 workers × 250 files made every batch time out and the scan read nothing. The
+reader therefore measures its own failures and shrinks the batch for the rest of
+the scan (a fifth, floor ten), which recovers that case automatically instead of
+timing out forever. `Settings → Read files in parallel` still matters most.
+
+**The time left follows the disk now, not the whole run.** The rate used to be
+files divided by seconds since the scan began, so it was anchored to the walk —
+a phase measured in directories per second that takes minutes on a large library
+and was counted in the same total — and it never reacted when the drive sped up
+or slowed down. It is now a rolling window of the last 15 seconds, falling back
+to the phase and then the whole run until there is history to measure.
+
 ## Cross-filtering, and what the numbers describe
 
 A facet is queried with **every filter except its own** — `Filter.to_sql(omit=…)`.

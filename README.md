@@ -183,9 +183,20 @@ exiftool path, and two indexing numbers. **Restore defaults** returns every fiel
 to its shipped value.
 
 The one setting that matters for speed is **Read files in parallel** — reading
-EXIF parallelises almost perfectly. The default is `cores − 2`, capped at 12,
-which keeps the machine responsive during a scan. **Batch size** is a distant
-second: 50 is both the fastest and the smoothest.
+EXIF parallelises almost perfectly, up to the point where the drive saturates.
+The default is `cores − 2`, capped at 12, which keeps the machine responsive
+during a scan. **Batch size** is a distant second: 50 is both the fastest and the
+smoothest.
+
+On a slow or external drive, more is not better: enough files in flight and every
+read times out. Photo Stats notices that and shrinks the batch for the rest of
+the scan by itself, so the time left stays honest rather than the bar sitting at
+95%. For a spinning or network drive, `2–4` in **Read files in parallel** is
+usually the fastest setting.
+
+The "time left" figure is measured over the last few seconds of reading, not
+averaged over the whole run, so it tracks what your disk is actually doing —
+including the slow start before its cache warms up.
 
 ---
 

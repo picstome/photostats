@@ -31,6 +31,15 @@ STDERR_KEEP = 4096
 #: so numeric tags come back as numbers while Flash/WhiteBalance stay readable.
 EXIFTAG_ARGS = [
     *[f"-{tag}" for tag in EXIFTAGS],
+    # "-fast" (level 1): do not scan past the end of the image for AFCP or
+    # PreviewImage trailers. On a library on an exFAT drive this was ~2x the
+    # scan time, because exiftool would otherwise seek across the whole file to
+    # confirm there is nothing after the metadata. Level 1 is the only safe one:
+    # "-fast2" also drops MakerNotes, which is where several bodies keep the
+    # lens model — it lost Lens/LensType on JPEGs in testing — and above that
+    # entire tags go missing. ``tests/test_indexing.py`` asserts level 1 keeps
+    # every tag, so the faster flag cannot quietly cost the lens chart.
+    "-fast",
     "-api",
     "largefilesupport=1",
     "-charset",
