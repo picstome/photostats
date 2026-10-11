@@ -268,7 +268,18 @@ Only rows whose `raw_json` predates the tag (a cache written by a build older
 than this one) keep it NULL and fall back to the dimensions. There is no cheaper
 recovery for those: an orientation-only exiftool pass measures barely faster than
 a full read — the file still has to be opened — so it would be a rescan by
-another name.
+another name. For those, `photostats-cli --refresh` re-reads every photo.
+
+A normal scan will *not* fix a cache like that, and that surprises people. The
+walk only reads files whose size or modification time changed, so re-scanning an
+untouched library reads nothing — it finishes in a second and the stale rows stay
+stale. `--refresh` is the deliberate exception: it unlinks every photo from its
+file (without deleting the photo, so the window keeps showing numbers) and lets
+the ordinary scan re-read them. Because "unlinked but the photo is still there"
+is exactly the state the scan treats as "not read yet", a refresh **resumes**
+after a stop like any other scan — run the same command again and it carries on
+instead of starting over. `--reindex` is the blunter option: it deletes the cache
+and rebuilds, which is what you want after corruption, not for filling a field.
 
 The rule of thumb: a stored column earns a migration when it is filtered and
 indexed often, and a derived expression is right when it is a pure function of

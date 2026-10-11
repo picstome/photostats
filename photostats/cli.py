@@ -16,10 +16,11 @@ from .core.exiftool import find_exiftool, install_hint
 from .core.filters import (
     Filter,
 )
-from .core.indexer import Indexer
+from .core.format import format_duration
+from .core.indexer import PHASE_EXTRACT, PHASE_WALK, Indexer, Progress
 from .core.legacy import import_legacy_cache, legacy_candidates
 from .core.queries import PhotoStore
-from .core.scanner import ROOT_DIR  # noqa: F401  (kept for symmetry with the engine)
+from .core.scanner import ROOT_DIR, mark_all_for_extraction  # noqa: F401  (ROOT_DIR kept for symmetry)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="use the cache only, do not look for new photos")
     parser.add_argument("--reindex", action="store_true",
                         help="clear the cache and read every photo again")
+    parser.add_argument("--refresh", action="store_true",
+                        help="read every photo again to fill in metadata a newer build "
+                             "added; keeps the cache and resumes if stopped")
     parser.add_argument("--import-legacy", action="store_true",
                         help="import a cache from the original script, then exit")
     parser.add_argument("--camera", action="append", default=[], help="filter by camera model")
@@ -76,6 +80,31 @@ def _parse_date(value: str | None):
         raise SystemExit(f"Not a valid date: {value!r}. Use YYYY-MM-DD.") from None
 
 
+def _live_progress():
+    """A single updating line on stderr, so a multi-hour read is not a black box.
+
+    Only drawn when stderr is a terminal; when output is piped the final summary
+    is enough and a line per quarter second would be noise.
+    """
+    if not sys.stderr.isatty():
+        return None
+
+    def report(progress: Progress) -> None:
+        if progress.phase == PHASE_EXTRACT:
+            line = (f"Reading metadata  {progress.indexed:,}/{progress.total:,}"
+                    f"  {progress.fraction:.0%}")
+            if progress.eta > 1:
+                line += f"  about {format_duration(progress.eta)} left"
+        elif progress.phase == PHASE_WALK:
+            line = f"Walking the folder tree  {progress.new:,} new so far"
+        else:
+            return
+        sys.stderr.write(f"\r\033[K  {line}")
+        sys.stderr.flush()
+
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -105,11 +134,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.import_legacy:
         return _import_legacy(db_path, folder)
 
-    if not args.no_scan or args.reindex:
+    if not args.no_scan or args.reindex or args.refresh:
         if args.reindex:
             db_path.unlink(missing_ok=True)
             init_db(db_path)
-        result = Indexer(db_path, folder).run()
+        elif args.refresh:
+            from .core.db import connect
+
+            conn = connect(db_path)
+            try:
+                queued = mark_all_for_extraction(conn)
+            finally:
+                conn.close()
+            if queued:
+                print(f"Queued {queued:,} photos for a fresh read", file=sys.stderr)
+            else:
+                print("Resuming the refresh already in progress", file=sys.stderr)
+        progress = _live_progress()
+        result = Indexer(db_path, folder, on_progress=progress).run()
+        if progress is not None:
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
         if not result.ok:
             print(result.message or "Scan failed", file=sys.stderr)
             return 1

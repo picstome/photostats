@@ -526,3 +526,42 @@ def test_the_orientation_tag_is_backfilled_from_the_stored_metadata(tmp_path):
     conn.close()
     assert tags["rotated.CR3"] == 8, "the tag stored in raw_json was not read back"
     assert tags["plain.CR3"] is None, "a row without the tag must stay NULL"
+
+
+def test_a_refresh_requeues_every_photo_once(indexed):
+    from photostats.core.scanner import mark_all_for_extraction, refresh_in_progress
+
+    _root, db, _ = indexed
+    conn = connect(db)
+    try:
+        assert not refresh_in_progress(conn), "a cache at rest is not refreshing"
+        assert mark_all_for_extraction(conn) == 24, "every photo should be queued"
+        assert refresh_in_progress(conn), "queued files leave a detectable gap"
+        # Running the command again resumes; it must not re-queue from scratch.
+        assert mark_all_for_extraction(conn) == 0
+    finally:
+        conn.close()
+
+
+def test_a_refresh_resumes_on_the_next_scan_and_completes(indexed):
+    from photostats.core.scanner import mark_all_for_extraction, refresh_in_progress
+
+    root, db, _ = indexed
+    conn = connect(db)
+    mark_all_for_extraction(conn)
+    conn.close()
+
+    # The photos stay put while the re-read runs, so the numbers never blank out.
+    assert counts(db, "SELECT COUNT(*) FROM photos") == [(24,)]
+
+    result = scan(db, root)
+    assert result.ok
+    assert result.extracted == 24, "the queued files should be read again"
+    conn = connect(db, readonly=True)
+    try:
+        assert not refresh_in_progress(conn)
+    finally:
+        conn.close()
+    assert counts(
+        db, "SELECT COUNT(*) FROM files WHERE representative = 1 AND photo_id IS NULL"
+    ) == [(0,)]

@@ -143,6 +143,7 @@ photostats-cli ~/Pictures --csv photos.csv     # the matching photos, one row ea
 photostats-cli ~/Pictures --json report.json   # filters, full statistics, photos
 photostats-cli ~/Pictures --no-scan            # use the cache only
 photostats-cli ~/Pictures --reindex            # clear the cache and read everything
+photostats-cli ~/Pictures --refresh            # re-read every photo, keep the cache (resumable)
 photostats-cli ~/Photos --import-legacy        # import an old cache and exit
 ```
 

@@ -271,6 +271,41 @@ def representatives_needing_extraction(
     return [(row["id"], row["rel_path"]) for row in rows]
 
 
+def refresh_in_progress(conn: sqlite3.Connection) -> bool:
+    """True while a metadata refresh is mid-flight.
+
+    At rest every photo is linked from its representative file, so the two
+    counts match. Marking files for a re-read unlinks them *without* deleting
+    the photos, which leaves the photos ahead of the links — that gap is the
+    resume state, so nothing extra has to be stored to tell a refresh that
+    stopped from a first scan that has not finished.
+    """
+    photos = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+    linked = conn.execute(
+        "SELECT COUNT(*) FROM files WHERE representative = 1 AND photo_id IS NOT NULL"
+    ).fetchone()[0]
+    return photos > linked
+
+
+def mark_all_for_extraction(conn: sqlite3.Connection) -> int:
+    """Queue every representative file to be read again on the next scan.
+
+    The photo rows stay, so the window keeps showing numbers while the re-read
+    runs, and only the link is dropped — the state the scan already treats as
+    "not read yet". A refresh therefore resumes after a stop exactly like a first
+    scan. Returns how many files were queued; zero means one was already in
+    flight, in which case the caller is resuming rather than starting over.
+    """
+    if refresh_in_progress(conn):
+        return 0
+    cursor = conn.execute(
+        "UPDATE files SET photo_id = NULL WHERE representative = 1 AND photo_id IS NOT NULL"
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
+
 def prune_stale_dirs(conn: sqlite3.Connection, stats: WalkStats | None = None) -> int:
     """Forget files (and their photos) whose directory no longer exists.
 

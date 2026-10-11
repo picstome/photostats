@@ -11,27 +11,11 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QWidget
 
+from ...core.format import format_count, format_duration
 from ...core.indexer import PHASE_PAUSED, PHASE_WALK, Progress
 from ...i18n import tr
 
 IDLE = "idle"
-
-
-def format_duration(seconds: float) -> str:
-    """'3s', '2m 05s', '1h 04m' — rounded the way a person would say it."""
-    if seconds < 1:
-        return f"{seconds:.0f}s"
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    minutes, rest = divmod(int(seconds), 60)
-    if minutes < 60:
-        return f"{minutes}m {rest:02d}s"
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours}h {minutes:02d}m"
-
-
-def format_count(value: int) -> str:
-    return f"{value:,}"
 
 
 class ScanStatus(QWidget):

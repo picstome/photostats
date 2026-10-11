@@ -4,6 +4,21 @@ from __future__ import annotations
 
 from .parse import format_fnumber, format_focal, format_shutter
 
+
+def format_duration(seconds: float) -> str:
+    """'3s', '2m 05s', '1h 04m' — rounded the way a person would say it."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes, rest = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m {rest:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
+def format_count(value: int) -> str:
+    return f"{value:,}"
+
 #: Column order used by every export and by the results table header.
 RESULT_FIELDS = (
     "filename",
