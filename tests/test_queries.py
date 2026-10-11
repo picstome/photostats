@@ -270,3 +270,82 @@ def test_distinct_values_are_ordered_by_frequency(store):
     values = store.distinct("camera_key")
     assert values
     assert values[0][1] >= values[-1][1]
+
+
+def _set_dimensions(store, portrait, landscape, unknown):
+    """Give the fixture's photos real dimensions so orientation is meaningful."""
+    from photostats.core import db as dbmod
+
+    conn = dbmod.connect(store.db_path)
+    ids = [row[0] for row in conn.execute("SELECT id FROM photos ORDER BY id")]
+    for index, photo_id in enumerate(ids):
+        if index < portrait:
+            conn.execute("UPDATE photos SET width=4000, height=6000 WHERE id=?", (photo_id,))
+        elif index < portrait + landscape:
+            conn.execute("UPDATE photos SET width=6000, height=4000 WHERE id=?", (photo_id,))
+        else:
+            conn.execute("UPDATE photos SET width=NULL, height=NULL WHERE id=?", (photo_id,))
+    conn.commit()
+    conn.close()
+
+
+def test_orientation_is_derived_from_the_dimensions(store):
+    """No stored column and no migration: it comes from width and height."""
+    _set_dimensions(store, portrait=10, landscape=20, unknown=10)
+
+    result = store.facet("orientation")
+    # Read in the order it is said, not the order of the counts.
+    assert [bucket.key for bucket in result.buckets] == ["portrait", "landscape", "other"]
+    assert [bucket.label for bucket in result.buckets] == ["Portrait", "Landscape", "Others"]
+    assert [bucket.count for bucket in result.buckets] == [10, 20, 10]
+    assert result.unknown == 0, "the ELSE catches missing sizes; nothing is unknown"
+
+
+def test_missing_dimensions_are_other_not_portrait(store):
+    """NULL > width is not true in SQLite, so the guard has to be in the CASE."""
+    _set_dimensions(store, portrait=0, landscape=0, unknown=40)
+
+    buckets = {bucket.key: bucket.count for bucket in store.facet("orientation").buckets}
+    assert buckets == {"other": 40}
+    assert buckets.get("portrait", 0) == 0
+
+
+def test_orientation_filter_matches_one_orientation(store):
+    _set_dimensions(store, portrait=10, landscape=20, unknown=10)
+
+    portrait = store.totals(Filter(orientation=frozenset({"portrait"}))).matched
+    other = store.totals(Filter(orientation=frozenset({"other"}))).matched
+    assert portrait == 10
+    assert other == 10
+    assert portrait + other < store.totals().total
+
+
+def test_orientation_uses_the_exif_rotation_tag(store):
+    """A portrait frame is stored landscape, with Orientation 8 saying so.
+
+    This is the whole reason the dimensions alone are not enough: a camera
+    writes the sensor's size and records the rotation separately, so comparing
+    width with height counted almost every portrait shot as landscape.
+    """
+    from photostats.core import db as dbmod
+
+    conn = dbmod.connect(store.db_path)
+    ids = [row[0] for row in conn.execute("SELECT id FROM photos ORDER BY id")]
+    # Stored landscape but rotated a quarter turn: actually portrait.
+    for photo_id in ids[:10]:
+        conn.execute("UPDATE photos SET width=6960, height=4640, orientation_tag=8 "
+                     "WHERE id=?", (photo_id,))
+    # The same stored dimensions with no rotation: genuinely landscape.
+    for photo_id in ids[10:20]:
+        conn.execute("UPDATE photos SET width=6960, height=4640, orientation_tag=1 "
+                     "WHERE id=?", (photo_id,))
+    for photo_id in ids[20:]:
+        conn.execute("UPDATE photos SET width=NULL, height=NULL, orientation_tag=NULL "
+                     "WHERE id=?", (photo_id,))
+    conn.commit()
+    conn.close()
+
+    buckets = {bucket.key: bucket.count for bucket in store.facet("orientation").buckets}
+    assert buckets["portrait"] == 10
+    assert buckets["landscape"] == 10
+    assert store.totals(Filter(orientation=frozenset({"portrait"}))).matched == 10

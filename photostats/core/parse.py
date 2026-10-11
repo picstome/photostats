@@ -43,6 +43,7 @@ EXIFTAGS = [
     "WhiteBalance",
     "ImageWidth#",
     "ImageHeight#",
+    "Orientation#",
     "FileType",
     "MIMEType",
     "OffsetTimeOriginal",
@@ -374,4 +375,9 @@ def build_photo_row(
         round(megapixels, 2) if megapixels else None,
         f"{width}x{height}" if width and height else None,
         raw_json,
+        # The EXIF Orientation tag (1-8), kept as read. A camera writes the
+        # sensor's dimensions and records the rotation separately, so a portrait
+        # frame is stored 6960x4640 with Orientation 8; without this tag every
+        # such photo was counted as landscape.
+        to_int(meta.get("Orientation")),
     )

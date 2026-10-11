@@ -1621,3 +1621,165 @@ def test_a_worker_thread_error_does_not_build_a_window(app):
         assert not worker.is_alive()
     finally:
         sys.excepthook = original
+
+
+# -- every value of a facet, and clearing them -----------------------------
+
+def test_clear_all_removes_chart_filters_and_their_chips(library, window, app):
+    """Clearing must reach the filters that came from clicking a bar.
+
+    Those live in the same Filter as the sidebar's, but a stale chip or a
+    still-highlighted bar after "Clear all filters" reads as a filter that will
+    not come off.
+    """
+    label = window.stats_grid.cards["camera"].result.buckets[0].label
+    window._on_bar_clicked("camera", label)
+    spin(app, 900)
+    assert window.filters.cameras
+    assert _chips(window) == 1
+
+    window._clear_filters()
+    spin(app, 900)
+
+    assert window.filters.is_empty
+    assert _chips(window) == 0
+    assert window.chip_row.isHidden()
+    for card in window.stats_grid.cards.values():
+        assert card.selection_badge.isHidden(), f"{card.facet} badge survived"
+
+
+def test_the_orientation_card_shows_portrait_landscape_other(library, window, app):
+    """The ninth chart, and the order it is read in rather than counted in."""
+    from photostats.core import db as dbmod
+
+    conn = dbmod.connect(window.db_path)
+    ids = [row[0] for row in conn.execute("SELECT id FROM photos ORDER BY id")]
+    for index, photo_id in enumerate(ids):
+        if index < len(ids) // 3:
+            conn.execute("UPDATE photos SET width=4000, height=6000 WHERE id=?", (photo_id,))
+        elif index < 2 * len(ids) // 3:
+            conn.execute("UPDATE photos SET width=6000, height=4000 WHERE id=?", (photo_id,))
+        else:
+            conn.execute("UPDATE photos SET width=NULL, height=NULL WHERE id=?", (photo_id,))
+    conn.commit()
+    conn.close()
+
+    window._refresh(force=True)
+    spin(app, 900)
+
+    card = window.stats_grid.cards["orientation"]
+    assert [bucket.key for bucket in card.result.buckets] == ["portrait", "landscape", "other"]
+    assert [bucket.label for bucket in card.result.buckets] == ["Portrait", "Landscape", "Others"]
+    assert window.filters.is_empty, "the card must not filter by itself"
+
+
+def test_clicking_a_card_offers_every_value(library, window, monkeypatch):
+    """A chart draws five bars; the card opens the full list for its facet."""
+    import photostats.ui.main_window as mw
+
+    seen: dict = {}
+
+    class FakeDialog:
+        Rejected = object()
+
+        def __init__(self, theme, title, values, selected, placeholder, parent=None):
+            seen["title"] = title
+            seen["values"] = list(values)
+            seen["selected"] = set(selected)
+
+        def exec(self):
+            return FakeDialog.Rejected
+
+    monkeypatch.setattr(mw, "FacetDialog", FakeDialog)
+    window.stats_grid.cards["camera"].show_all_requested.emit("camera")
+
+    assert seen["title"] == "Cameras"
+    assert seen["values"], "no values offered"
+    assert all(len(item) == 3 for item in seen["values"]), "want (label, count, share)"
+
+
+def test_choosing_values_in_the_dialog_filters(library, window, app):
+    labels = {bucket.label for bucket in window.stats_grid.cards["camera"].result.buckets[:2]}
+    window._apply_facet_selection("camera", labels)
+    spin(app, 900)
+
+    assert window.filters.cameras == frozenset(labels)
+    assert _chips(window) == len(labels)
+
+
+def test_choosing_range_values_filters_to_their_span(library, window, app):
+    labels = [bucket.label for bucket in window.stats_grid.cards["iso"].result.buckets]
+    window._apply_facet_selection("iso", {labels[0], labels[-1]})
+    spin(app, 900)
+
+    assert window.filters.iso_min is not None and window.filters.iso_max is not None
+    assert window.filters.iso_min <= window.filters.iso_max
+
+
+def test_escape_closes_every_dialog_and_window(app, paths):
+    """Escape must get out of anything that opened over the page.
+
+    Built on the ``app``/``paths`` fixtures rather than ``window``: that one
+    auto-dismisses dialogs (so a stray modal cannot wedge the suite), which is
+    exactly what would stop this from seeing a dialog stay open.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from photostats.core.config import AppConfig
+    from photostats.ui import theme
+    from photostats.ui.panels.facet_dialog import FacetDialog
+    from photostats.ui.panels.photo_list_window import PhotoListWindow
+    from photostats.ui.panels.scan_dialog import ScanDialog
+    from photostats.ui.panels.settings_dialog import SettingsDialog
+
+    current = theme.LIGHT
+    config = AppConfig(paths=paths)
+
+    def escape(widget) -> None:
+        widget.activateWindow()
+        widget.setFocus()
+        QTest.keyClick(widget, Qt.Key_Escape)
+        spin(app, 80)
+
+    dialogs = [
+        SettingsDialog(config, current),
+        ScanDialog(current),
+        FacetDialog(current, "Cameras", [("NIKON Z8", 5, 1.0)], set(), "Filter…"),
+    ]
+    for dialog in dialogs:
+        dialog.show()
+        spin(app, 60)
+        assert dialog.isVisible(), f"{type(dialog).__name__} would not open"
+        escape(dialog)
+        assert not dialog.isVisible(), f"{type(dialog).__name__} ignored Escape"
+
+    photo_window = PhotoListWindow(current)
+    photo_window.show()
+    spin(app, 60)
+    assert photo_window.isVisible()
+    escape(photo_window)
+    assert not photo_window.isVisible(), "the photo list ignored Escape"
+
+
+def test_only_see_all_opens_the_value_list(library, window, app):
+    """A bar click filters; it must not also open the value dialog.
+
+    The chart ignores its mouse events, so before the button existed the events
+    propagated to the card and every bar click opened the dialog — which is why
+    a bar felt like it needed two clicks.
+    """
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    card = window.stats_grid.cards["camera"]
+    seen: list[str] = []
+    card.show_all_requested.connect(seen.append)
+
+    QTest.mouseClick(card.chart, Qt.LeftButton, pos=QPoint(40, 10))
+    spin(app, 400)
+    assert seen == [], "clicking a bar opened the value dialog"
+    assert window.filters.cameras, "clicking a bar did not filter"
+
+    QTest.mouseClick(card.see_all, Qt.LeftButton)
+    assert seen == ["camera"], "the See all button did not ask for the list"

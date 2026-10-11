@@ -13,7 +13,16 @@ import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from .filters import FACET_APERTURE, FACET_CAMERA, FACET_FOCAL, FACET_ISO, Filter
+from ..i18n import tr
+from .filters import (
+    FACET_APERTURE,
+    FACET_CAMERA,
+    FACET_FOCAL,
+    FACET_ISO,
+    FACET_ORIENTATION,
+    ORIENTATION_SQL,
+    Filter,
+)
 from .parse import format_fnumber, format_focal, format_shutter
 
 #: Catalogue keys, not literals: month names are translated at display time.
@@ -36,9 +45,18 @@ FACETS: dict[str, tuple[str, str, callable | None]] = {
     "flash": ("flash_fired", "flash_fired", lambda v: {1: "Fired", 0: "Not fired"}.get(v, "Unknown")),
     "white_balance": ("white_balance", "white_balance", None),
     "file_type": ("file_type", "file_type", None),
+    FACET_ORIENTATION: (ORIENTATION_SQL, ORIENTATION_SQL, None),
     "month": ("month", "month", lambda m: month_label(int(m)) if m else "?"),
     "year": ("year", "year", str),
     "resolution": ("resolution", "resolution", None),
+}
+
+#: Facets whose buckets are shown in a fixed order rather than by count. The
+#: orientation chart reads "portrait, landscape, other" the way it would be
+#: said, not with the smallest bar last, and the count order would put the
+#: dominant landscape first.
+FACET_ORDER: dict[str, tuple[str, ...]] = {
+    FACET_ORIENTATION: ("portrait", "landscape", "other"),
 }
 
 #: Charts whose x axis is numeric and therefore binned when very fine-grained.
@@ -114,6 +132,7 @@ FACET_TITLES = {
     "flash": "Flash",
     "white_balance": "White balance",
     "file_type": "File type",
+    FACET_ORIENTATION: "Orientation",
     "month": "Month",
     "year": "Year",
     "resolution": "Resolution",
@@ -236,6 +255,10 @@ class PhotoStore:
         counted = sum(bucket.count for bucket in buckets)
         for bucket in buckets:
             bucket.share = (bucket.count / counted) if counted else 0.0
+        order = FACET_ORDER.get(name)
+        if order:
+            rank = {key: index for index, key in enumerate(order)}
+            buckets.sort(key=lambda bucket: rank.get(str(bucket.key), len(rank)))
         return FacetResult(
             facet=name,
             title=FACET_TITLES.get(name, name.title()),  # translated at display time
@@ -426,6 +449,15 @@ def _format_bucket(facet: str, key, formatter) -> str:
         return {1: "Fired", 0: "Not fired"}.get(key, "Unknown")
     if facet == "file_type":
         return {"raw": "RAW", "jpeg": "JPEG", "tiff": "TIFF / HEIC"}.get(key, str(key))
+    if facet == FACET_ORIENTATION:
+        # Translated here, not in the SQL: the CASE has to return a stable key
+        # ("portrait") for the filter to match on, while the bar has to read
+        # "Portrait" in whichever language is active.
+        return {
+            "portrait": tr("Portrait"),
+            "landscape": tr("Landscape"),
+            "other": tr("Others"),
+        }.get(str(key), str(key))
     if facet == "resolution":
         try:
             width, height = (int(part) for part in str(key).split("x"))

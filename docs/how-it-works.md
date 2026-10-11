@@ -243,3 +243,34 @@ The suite is deliberately ordinary — no display, no network, no real library:
 Bump `SCHEMA_VERSION` in `core/db.py` and add a forward migration block to
 `_migrate()`. Every stored row is written in the same transaction as the progress
 that got it there, so an interrupted scan resumes rather than double-counting.
+
+A migration is not always the answer, though. **Orientation** — portrait,
+landscape, other — is a `CASE` rather than a stored classification, because it
+is a pure function of data already on the row. It does need one thing a cache
+indexed by an older version does not have: the EXIF **Orientation** tag. A camera
+writes the sensor's dimensions and records the rotation separately, so a portrait
+frame is stored 6960×4640 with Orientation 8 — and comparing width with height
+alone counted almost every portrait shot as landscape. Tags 5–8 mean a quarter
+turn, so the displayed dimensions are the stored ones swapped.
+
+So this one *did* need a schema change: `SCHEMA_VERSION` is 3 and `_migrate()`
+adds an `orientation_tag` column with `ALTER TABLE` (a `CREATE TABLE IF NOT
+EXISTS` never reaches a table that already exists).
+
+Crucially, filling it for a cache that already exists does **not** need a rescan.
+The full exiftool record is stored per row in `raw_json`, and the tag is inside
+it, so the migration backfills with one SQL statement — `json_extract(raw_json,
+'$.Orientation')` — opening no files at all. On a half-million-row cache that is
+about two seconds; the same work as a re-read would be hours on an external
+drive, because the cost of a rescan is the drive, not exiftool.
+
+Only rows whose `raw_json` predates the tag (a cache written by a build older
+than this one) keep it NULL and fall back to the dimensions. There is no cheaper
+recovery for those: an orientation-only exiftool pass measures barely faster than
+a full read — the file still has to be opened — so it would be a rescan by
+another name.
+
+The rule of thumb: a stored column earns a migration when it is filtered and
+indexed often, and a derived expression is right when it is a pure function of
+data already present — but "already present" has to include the tags the scan
+actually read.

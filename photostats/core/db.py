@@ -16,7 +16,7 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 # Bump when adding a migration to _migrate().
 SCHEMA = """
@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS photos (
     height          INTEGER,
     megapixels      REAL,
     resolution      TEXT,
-    raw_json        TEXT
+    raw_json        TEXT,
+    orientation_tag INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_photos_date   ON photos(taken_at);
 CREATE INDEX IF NOT EXISTS ix_photos_year   ON photos(year);
@@ -109,7 +110,7 @@ CREATE TABLE IF NOT EXISTS meta (
 PHOTO_COLUMNS = (
     "rel_path, mod_time, size, taken_at, date_source, year, month, day, camera, camera_key, "
     "lens, lens_key, iso, shutter_seconds, fnumber, focal_mm, focal35_mm, flash_fired, flash_raw, "
-    "white_balance, file_type, width, height, megapixels, resolution, raw_json"
+    "white_balance, file_type, width, height, megapixels, resolution, raw_json, orientation_tag"
 )
 
 _COLUMN_LIST = PHOTO_COLUMNS.split(", ")
@@ -192,6 +193,44 @@ def _migrate(conn: sqlite3.Connection) -> None:
     version = int(row[0])
     if version >= SCHEMA_VERSION:
         return
-    # Future migrations go here, one `if version < N:` block each.
+    # One `if version < N:` block per migration, oldest first.
+    if version < 3:
+        # Orientation (portrait/landscape) needs the EXIF Orientation tag. The
+        # column is added for databases that predate it, and then filled from
+        # the raw metadata already on every row — the tag was in raw_json all
+        # along, so this costs a JSON parse and no file is opened. Rows whose
+        # raw_json predates the tag stay NULL and fall back to the dimensions;
+        # only re-reading those files can recover the rotation.
+        _add_column(conn, "photos", "orientation_tag", "INTEGER")
+        _backfill_orientation(conn)
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                  (str(SCHEMA_VERSION),))
+
+
+def _backfill_orientation(conn: sqlite3.Connection) -> None:
+    """Fill ``orientation_tag`` from the raw metadata already stored.
+
+    A SQL UPDATE rather than a rescan: the tag is inside ``raw_json``, so there
+    is nothing to read from disk. Guarded by ``json_valid`` because a malformed
+    blob would otherwise abort the whole migration, and by ``IS NOT NULL`` so a
+    row that never carried the tag is left for the dimension fallback.
+    """
+    conn.execute(
+        "UPDATE photos SET orientation_tag = "
+        "CAST(json_extract(raw_json, '$.Orientation') AS INTEGER) "
+        "WHERE orientation_tag IS NULL AND json_valid(raw_json) "
+        "AND json_extract(raw_json, '$.Orientation') IS NOT NULL"
+    )
+
+
+def _add_column(conn: sqlite3.Connection, table: str, column: str, kind: str) -> None:
+    """ALTER TABLE ... ADD COLUMN, but only if it is not already there.
+
+    ``CREATE TABLE IF NOT EXISTS`` is a no-op on an existing table, so a new
+    column reaches only databases created from scratch. This is how it reaches
+    the ones already on disk. Idempotent, because a half-applied migration must
+    not make the next open fail.
+    """
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")

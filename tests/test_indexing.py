@@ -467,3 +467,62 @@ def test_the_time_left_follows_the_current_speed(tmp_path, monkeypatch):
     whole_run = progress[-1].indexed / progress[-1].elapsed
     assert rate < whole_run / 2, "the estimate is still averaging the whole run"
     assert progress[-1].eta > 0
+
+
+def test_a_version_1_database_gains_the_orientation_column(tmp_path):
+    """A new column has to reach databases already on disk, not only new ones.
+
+    ``CREATE TABLE IF NOT EXISTS`` is a no-op on a table that exists, so the
+    migration has to ALTER the table; without it every existing cache would be
+    missing the column the orientation query reads.
+    """
+    from photostats.core import db as dbmod
+
+    db = tmp_path / "old.db"
+    conn = dbmod.connect(db)
+    conn.executescript(dbmod.SCHEMA.replace(",\n    orientation_tag INTEGER\n", "\n"))
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '1')")
+    conn.commit()
+    before = {row[1] for row in conn.execute("PRAGMA table_info(photos)")}
+    conn.close()
+    assert "orientation_tag" not in before, "the fixture should look like version 1"
+
+    dbmod.init_db(db)
+
+    conn = dbmod.connect(db, readonly=True)
+    after = {row[1] for row in conn.execute("PRAGMA table_info(photos)")}
+    version = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
+    conn.close()
+    assert "orientation_tag" in after
+    assert version == str(dbmod.SCHEMA_VERSION)
+
+
+def test_the_orientation_tag_is_backfilled_from_the_stored_metadata(tmp_path):
+    """The tag was in raw_json all along, so no file has to be read again.
+
+    A rescan of a large library on a slow drive is the thing this avoids: a
+    single UPDATE reads the orientation out of the metadata each row already
+    carries.
+    """
+    import json
+
+    from photostats.core import db as dbmod
+
+    db = tmp_path / "cache.db"
+    conn = dbmod.connect(db)
+    conn.executescript(dbmod.SCHEMA)
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2')")
+    conn.execute("INSERT INTO photos (rel_path, width, height, raw_json) VALUES (?,?,?,?)",
+                 ("rotated.CR3", 6960, 4640, json.dumps({"Orientation": 8})))
+    conn.execute("INSERT INTO photos (rel_path, width, height, raw_json) VALUES (?,?,?,?)",
+                 ("plain.CR3", 6960, 4640, json.dumps({"Model": "X"})))
+    conn.commit()
+    conn.close()
+
+    dbmod.init_db(db)
+
+    conn = dbmod.connect(db, readonly=True)
+    tags = dict(conn.execute("SELECT rel_path, orientation_tag FROM photos"))
+    conn.close()
+    assert tags["rotated.CR3"] == 8, "the tag stored in raw_json was not read back"
+    assert tags["plain.CR3"] is None, "a row without the tag must stay NULL"

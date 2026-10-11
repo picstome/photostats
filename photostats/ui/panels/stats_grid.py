@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -87,6 +88,9 @@ class ChartCard(Card):
 
     bar_clicked = Signal(str, str)  # (facet, label)
     selection_cleared = Signal(str)
+    #: The card itself was clicked, asking for every value of its facet — the
+    #: chart only draws the five largest bars, so the tail needs somewhere to go.
+    show_all_requested = Signal(str)
 
     def __init__(self, theme, facet: str, title: str, parent=None) -> None:
         super().__init__(theme, parent)
@@ -108,6 +112,16 @@ class ChartCard(Card):
         self.header = QLabel(title)
         self.header.setStyleSheet("font-weight: 600;")
         header_row.addWidget(self.header)
+        # The chart draws the five largest bars; this is how the rest of the
+        # facet is reached. A button rather than a click anywhere on the card:
+        # the bars ignore their mouse events, so a card-wide handler fired on
+        # every bar click too and the chart could not be used.
+        self.see_all = QPushButton(tr("See all"))
+        self.see_all.setObjectName("linkButton")
+        self.see_all.setCursor(Qt.PointingHandCursor)
+        self.see_all.setToolTip(tr("Show every value of this facet"))
+        self.see_all.clicked.connect(lambda: self.show_all_requested.emit(self.facet))
+        header_row.addWidget(self.see_all)
         header_row.addStretch(1)
         # Clicking a bar is silent unless the card says so. This badge names the
         # selection and clears it when clicked.
@@ -174,6 +188,7 @@ class StatsGrid(QWidget):
 
     bar_clicked = Signal(str, str)
     selection_cleared = Signal(str)
+    show_all_requested = Signal(str)
 
     def __init__(self, theme, parent=None) -> None:
         super().__init__(parent)
@@ -203,6 +218,7 @@ class StatsGrid(QWidget):
                 theme, facet, tr(FACET_TITLES.get(facet, facet.title())))
             card.bar_clicked.connect(self.bar_clicked)
             card.selection_cleared.connect(self.selection_cleared)
+            card.show_all_requested.connect(self.show_all_requested)
             # From the token, not a literal: a hardcoded 300 overrode the
             # column calculation and pushed the fourth column off the edge.
             card.setMinimumWidth(MIN_CARD_WIDTH)
@@ -292,6 +308,7 @@ def _selection_for(filters: Filter, facet: str) -> set[str]:
         FACET_LENS: "lenses",
         "white_balance": "white_balance",
         "file_type": "file_types",
+        "orientation": "orientation",
     }
     attribute = mapping.get(facet)
     if attribute is None:

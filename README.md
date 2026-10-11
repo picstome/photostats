@@ -2,7 +2,8 @@
 
 Photo Stats reads the EXIF metadata of a folder of photos and tells you what you
 actually shoot: which camera and lens, which ISO, aperture, shutter speed and
-focal length, over time. Filter by any of them and every chart updates together.
+focal length, over time, and how many frames are portrait or landscape. Filter by
+any of them and every chart updates together.
 
 Everything runs on your machine. No account, no upload, no cloud.
 
@@ -60,6 +61,13 @@ count and a share; the sliders span the values actually in your library; the dat
 fields rest on the oldest photo and on today. **Show N photos** opens the
 matching files in their own window — sortable, with double-click to reveal in
 Finder or Explorer.
+
+**See all shows every value.** A card has room for its five largest bars, so each
+one carries a **See all** button that opens the full list for that facet — the
+same searchable, counted list the sidebar uses — and whatever you tick becomes
+the filter. That is how a camera, lens or ISO below the top five gets chosen.
+**Clear all filters** drops everything, including the filters set from a bar, and
+**Esc** closes any dialog or window.
 
 **The scan is always visible.** Progress shows in the header, and a scan that
 takes more than a moment also gets a dialog with a **Continue in background**

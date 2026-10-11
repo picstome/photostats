@@ -17,6 +17,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -40,11 +41,12 @@ from ..core.filters import (
     FACET_FOCAL,
     FACET_ISO,
     FACET_LENS,
+    FACET_ORIENTATION,
     Filter,
 )
 from ..core.indexer import PHASE_EXTRACT, PHASE_WALK, Progress
 from ..core.legacy import legacy_candidates
-from ..core.queries import PhotoStore
+from ..core.queries import FACET_TITLES, PhotoStore
 from ..i18n import product_title, tr
 from .components.card import Card, Chip, Divider
 from .components.folder_bar import FolderBar, _shorten
@@ -52,6 +54,7 @@ from .components.footer_link import FooterLink
 from .components.timeline import TimelineChart, period_bounds
 from .components.update_banner import UpdateBanner
 from .core_filters_bridge import LIST_FACETS
+from .panels.facet_dialog import FacetDialog
 from .panels.filter_panel import FilterPanel
 from .panels.photo_list_window import PAGE_SIZE, PhotoListWindow
 from .panels.scan_dialog import ScanDialog
@@ -66,7 +69,18 @@ SCAN_DIALOG_DELAY_MS = 700
 #: How long the "finished" dialog stays before getting out of the way.
 SCAN_DONE_LINGER_MS = 2500
 
-VALUE_FACETS = (FACET_CAMERA, FACET_LENS, "white_balance", "file_type")
+VALUE_FACETS = (FACET_CAMERA, FACET_LENS, "white_balance", "file_type", FACET_ORIENTATION)
+
+#: The facets that are a range rather than a set, mapped to the two Filter
+#: fields that bound them. The value dialog offers these as a list too, and the
+#: span of what is chosen becomes the range — so an ISO that never made the top
+#: five bars is still selectable.
+_RANGE_FACETS = {
+    FACET_ISO: ("iso_min", "iso_max"),
+    "shutter": ("shutter_min", "shutter_max"),
+    FACET_APERTURE: ("aperture_min", "aperture_max"),
+    FACET_FOCAL: ("focal_min", "focal_max"),
+}
 
 
 class QueryEmitter(QObject):
@@ -314,6 +328,7 @@ class MainWindow(QMainWindow):
         self.stats_grid = StatsGrid(self.theme)
         self.stats_grid.bar_clicked.connect(self._on_bar_clicked)
         self.stats_grid.selection_cleared.connect(self._on_chart_selection_cleared)
+        self.stats_grid.show_all_requested.connect(self._open_facet_dialog)
         charts_layout.addWidget(self.stats_grid)
         charts_layout.addStretch(1)
 
@@ -757,17 +772,78 @@ class MainWindow(QMainWindow):
             values = set(getattr(self.filters, _attribute_for(facet)))
             values = {label} if modifiers & Qt.ShiftModifier else values ^ {label}
             self.filters = replace(self.filters, **{_attribute_for(facet): frozenset(values)})
-        elif facet == FACET_ISO:
-            self.filters = replace(self.filters, iso_min=float(label), iso_max=float(label))
-        elif facet == FACET_APERTURE:
-            value = float(label.lstrip("f/"))
-            self.filters = replace(self.filters, aperture_min=value, aperture_max=value)
-        elif facet == "shutter":
-            value = _shutter_value(label)
-            self.filters = replace(self.filters, shutter_min=value, shutter_max=value)
-        elif facet == FACET_FOCAL:
-            value = _to_number(label.replace("mm", ""))
-            self.filters = replace(self.filters, focal_min=value, focal_max=value)
+        elif facet in _RANGE_FACETS:
+            value = _facet_number(facet, label)
+            if value is None:
+                return
+            low_attr, high_attr = _RANGE_FACETS[facet]
+            self.filters = replace(self.filters, **{low_attr: value, high_attr: value})
+        else:
+            return
+        self._offset = 0
+        self.filter_panel.apply(self.filters)
+        self.stats_grid.set_selected(self.filters)
+        self._refresh()
+
+    def _open_facet_dialog(self, facet: str) -> None:
+        """Show every value of *facet* so the tail below the bars is reachable.
+
+        A chart draws its five largest bars; anything smaller is only counted in
+        the footer's "N more". This opens the full list for the facet — the same
+        searchable, counted list the sidebar uses — and applies the choice: a set
+        for the list facets, the span of the chosen values for a slider.
+        """
+        if self.store is None:
+            return
+        result = self.store.facet(facet, self.filters)
+        if not result.buckets:
+            return
+        values = [(bucket.label, bucket.count, bucket.share) for bucket in result.buckets]
+        dialog = FacetDialog(
+            self.theme, tr(FACET_TITLES.get(facet, facet.title())), values,
+            self._facet_selection(facet), tr("Filter…"), self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self._apply_facet_selection(facet, dialog.selected())
+
+    def _facet_selection(self, facet: str) -> set[str]:
+        """The facet's current values as bar labels, to preselect in the dialog."""
+        if facet in VALUE_FACETS:
+            return set(getattr(self.filters, _attribute_for(facet)))
+        bounds = _RANGE_FACETS.get(facet)
+        card = self.stats_grid.cards.get(facet)
+        if bounds is None or card is None or card.result is None:
+            return set()
+        low, high = (getattr(self.filters, bounds[0]), getattr(self.filters, bounds[1]))
+        if low is None and high is None:
+            return set()
+        chosen = set()
+        for bucket in card.result.buckets:
+            number = _facet_number(facet, bucket.label)
+            if number is None:
+                continue
+            if (low is None or number >= low) and (high is None or number <= high):
+                chosen.add(bucket.label)
+        return chosen
+
+    def _apply_facet_selection(self, facet: str, chosen: set[str]) -> None:
+        from dataclasses import replace
+
+        if facet in VALUE_FACETS:
+            attribute = _attribute_for(facet)
+            self.filters = replace(self.filters, **{attribute: frozenset(chosen)})
+        elif facet in _RANGE_FACETS:
+            numbers = sorted(
+                number for number in (_facet_number(facet, label) for label in chosen)
+                if number is not None
+            )
+            low_attr, high_attr = _RANGE_FACETS[facet]
+            self.filters = replace(
+                self.filters,
+                **{low_attr: numbers[0] if numbers else None,
+                   high_attr: numbers[-1] if numbers else None},
+            )
         else:
             return
         self._offset = 0
@@ -782,14 +858,9 @@ class MainWindow(QMainWindow):
         if facet in VALUE_FACETS:
             self.filters = replace(
                 self.filters, **{_attribute_for(facet): frozenset()})
-        elif facet == FACET_ISO:
-            self.filters = replace(self.filters, iso_min=None, iso_max=None)
-        elif facet == FACET_APERTURE:
-            self.filters = replace(self.filters, aperture_min=None, aperture_max=None)
-        elif facet == "shutter":
-            self.filters = replace(self.filters, shutter_min=None, shutter_max=None)
-        elif facet == FACET_FOCAL:
-            self.filters = replace(self.filters, focal_min=None, focal_max=None)
+        elif facet in _RANGE_FACETS:
+            low_attr, high_attr = _RANGE_FACETS[facet]
+            self.filters = replace(self.filters, **{low_attr: None, high_attr: None})
         else:
             return
         self._offset = 0
@@ -844,6 +915,12 @@ class MainWindow(QMainWindow):
         self._offset = 0
         self.filter_panel.apply(self.filters)
         self.stats_grid.set_selected(self.filters)
+        # Clear the timeline's own selection now rather than waiting for the
+        # query to come back: a drag leaves a highlighted span, and until the
+        # result lands the page still looks filtered.
+        if self.timeline.timeline is not None:
+            self.timeline.set_timeline(self.timeline.timeline, (None, None))
+        self._rebuild_chips()
         self._refresh()
 
     def _rebuild_chips(self) -> None:
@@ -1205,6 +1282,27 @@ def _shutter_value(label: str) -> float:
     if label.startswith("1/"):
         return 1 / float(label[2:])
     return to_float(label) or 0.5
+
+
+def _facet_number(facet: str, label: str) -> float | None:
+    """The number behind a range facet's bar label, or None if it is not one.
+
+    The one place the label formats ('f/1.8', '1/500', '24mm', '100') are turned
+    back into values, shared by the bar click and the value dialog so the two
+    cannot drift apart.
+    """
+    try:
+        if facet == FACET_ISO:
+            return float(label)
+        if facet == FACET_APERTURE:
+            return float(label.lstrip("f/"))
+        if facet == "shutter":
+            return _shutter_value(label)
+        if facet == FACET_FOCAL:
+            return _to_number(label.replace("mm", ""))
+    except (TypeError, ValueError):
+        return None
+    return None
 
 
 def _fmt(value, facet: str) -> str:

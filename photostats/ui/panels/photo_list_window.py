@@ -141,6 +141,10 @@ class PhotoListWindow(QMainWindow):
         self.setWindowTitle(product_title("matching photos"))
         self.resize(1120, 620)
         self.setStyleSheet(f"QMainWindow {{ background: {theme.bg}; }}")
+        # Escape closes it, the same as every dialog in the app. A QMainWindow
+        # has no Escape behaviour of its own, so without this the list was the
+        # one window Escape did nothing in.
+        QShortcut(QKeySequence(Qt.Key_Escape), self, self.close)
 
         central = QWidget()
         layout = QVBoxLayout(central)

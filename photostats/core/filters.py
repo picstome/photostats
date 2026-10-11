@@ -19,6 +19,7 @@ FACET_FOCAL = "focal"
 FACET_FLASH = "flash"
 FACET_WHITE_BALANCE = "white_balance"
 FACET_FILE_TYPE = "file_type"
+FACET_ORIENTATION = "orientation"
 FACET_YEAR = "year"
 FACET_MONTH = "month"
 FACET_RESOLUTION = "resolution"
@@ -40,6 +41,7 @@ class Filter:
     white_balance: frozenset[str] = frozenset()
     file_types: frozenset[str] = frozenset()
     resolutions: frozenset[str] = frozenset()
+    orientation: frozenset[str] = frozenset()
     iso_min: float | None = None
     iso_max: float | None = None
     shutter_min: float | None = None
@@ -90,7 +92,7 @@ class Filter:
         """Number of individual constraints, for the 'filters (n)' badge."""
         total = 0
         for facet in (FACET_CAMERA, FACET_LENS, FACET_WHITE_BALANCE, FACET_FILE_TYPE,
-                      FACET_RESOLUTION):
+                      FACET_ORIENTATION, FACET_RESOLUTION):
             total += len(getattr(self, self._attribute(facet)))
         for low, high in (
             ("iso_min", "iso_max"), ("shutter_min", "shutter_max"),
@@ -207,11 +209,36 @@ class Filter:
 
 #: facet -> (Filter attribute, database column). Keys are compared, not labels,
 #: so that "NIKON Z8" and "nikon z8" are the same selection.
+#:
+#: Orientation is the one entry whose "column" is an expression rather than a
+#: stored column, so it needs no migration and works on a cache indexed by an
+#: older version. It reads the EXIF Orientation tag as well as the dimensions:
+#: a camera writes the sensor's size and records the rotation separately, so a
+#: portrait frame is stored 6960x4640 with Orientation 8 and comparing width to
+#: height alone counted it as landscape. Tags 5-8 mean the image is rotated a
+#: quarter turn, so the displayed dimensions are the stored ones swapped.
+#:
+#: The last ELSE catches square frames *and* photos with no dimensions read:
+#: SQLite's NULL comparisons are not true, so a missing size falls through to
+#: "other" rather than being counted as a portrait it may not be. Rows indexed
+#: before the tag was read have it NULL, and fall back to the dimensions — the
+#: best that can be said without opening the file again.
+ORIENTATION_SQL = (
+    "(CASE"
+    " WHEN width IS NULL OR height IS NULL THEN 'other'"
+    " WHEN orientation_tag IN (5, 6, 7, 8) THEN"
+    "   CASE WHEN width > height THEN 'portrait' ELSE 'landscape' END"
+    " WHEN height > width THEN 'portrait'"
+    " WHEN width > height THEN 'landscape'"
+    " ELSE 'other' END)"
+)
+
 FACET_COLUMNS = {
     FACET_CAMERA: ("cameras", "camera_key"),
     FACET_LENS: ("lenses", "lens_key"),
     FACET_WHITE_BALANCE: ("white_balance", "white_balance"),
     FACET_FILE_TYPE: ("file_types", "file_type"),
+    FACET_ORIENTATION: ("orientation", ORIENTATION_SQL),
 }
 
 

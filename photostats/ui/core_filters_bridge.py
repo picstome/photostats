@@ -13,10 +13,12 @@ from ..core.filters import (
     FACET_FOCAL,
     FACET_ISO,
     FACET_LENS,
+    FACET_ORIENTATION,
     FACET_WHITE_BALANCE,
 )
 
-#: Facets drawn as cross-filterable bar charts, in reading order.
+#: Facets drawn as cross-filterable bar charts, in reading order. Nine of them:
+#: three rows of three, so the grid stays even.
 CHART_FACETS = (
     FACET_CAMERA,
     FACET_LENS,
@@ -26,6 +28,7 @@ CHART_FACETS = (
     FACET_FOCAL,
     "flash",
     FACET_WHITE_BALANCE,
+    FACET_ORIENTATION,
 )
 
 #: Facet -> the database column whose distinct values feed its sidebar list.
