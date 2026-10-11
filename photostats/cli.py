@@ -39,6 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--refresh", action="store_true",
                         help="read every photo again to fill in metadata a newer build "
                              "added; keeps the cache and resumes if stopped")
+    parser.add_argument("--orientation", action="store_true",
+                        help="fill in missing orientation by reading only each photo's "
+                             "header — much faster than --refresh on a slow drive")
     parser.add_argument("--import-legacy", action="store_true",
                         help="import a cache from the original script, then exit")
     parser.add_argument("--camera", action="append", default=[], help="filter by camera model")
@@ -105,6 +108,13 @@ def _live_progress():
     return report
 
 
+def _clear_progress_line(progress) -> None:
+    """Wipe the live line, if one was drawn, before printing anything else."""
+    if progress is not None:
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -134,6 +144,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.import_legacy:
         return _import_legacy(db_path, folder)
 
+    if args.orientation:
+        from .core.orientation import backfill
+
+        progress = _live_progress()
+        try:
+            result = backfill(db_path, folder, on_progress=progress)
+        except KeyboardInterrupt:
+            _clear_progress_line(progress)
+            print("\nPaused. Run the same command again to resume.", file=sys.stderr)
+            return 130
+        _clear_progress_line(progress)
+        if not result.ok:
+            print(result.message or "Backfill failed", file=sys.stderr)
+            return 1
+        print(f"Filled the orientation of {result.filled:,} of {result.photos:,} photos")
+        return 0
+
     if not args.no_scan or args.reindex or args.refresh:
         if args.reindex:
             db_path.unlink(missing_ok=True)
@@ -152,9 +179,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("Resuming the refresh already in progress", file=sys.stderr)
         progress = _live_progress()
         result = Indexer(db_path, folder, on_progress=progress).run()
-        if progress is not None:
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
+        _clear_progress_line(progress)
         if not result.ok:
             print(result.message or "Scan failed", file=sys.stderr)
             return 1

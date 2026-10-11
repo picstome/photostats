@@ -281,6 +281,18 @@ after a stop like any other scan — run the same command again and it carries o
 instead of starting over. `--reindex` is the blunter option: it deletes the cache
 and rebuilds, which is what you want after corruption, not for filling a field.
 
+When the field is Orientation there is a cheaper route. exiftool finds it by
+walking the metadata boxes, and on a CR3 that means reading several megabytes off
+the disk for one 2-byte value — the read, not the parsing, is the cost of a
+refresh on a slow drive. But Orientation and the pixel dimensions sit in the first
+few kilobytes of every format we handle, so `--orientation` copies just the header
+to a scratch file and asks exiftool about that. It is the same answer — checked
+against full reads on JPEG, CR3, ARW, DNG, CR2 and PNG — for about an eighth of
+the I/O: on a 10 TB USB drive, 16 hours became 2. It writes `orientation_tag` and
+any missing width/height only, and leaves `raw_json` alone, because a header does
+not carry the lens and exposure tags a full scan records. Like the refresh, it
+keeps a cursor in `meta` and resumes where it stopped.
+
 The rule of thumb: a stored column earns a migration when it is filtered and
 indexed often, and a derived expression is right when it is a pure function of
 data already present — but "already present" has to include the tags the scan

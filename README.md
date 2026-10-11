@@ -144,6 +144,7 @@ photostats-cli ~/Pictures --json report.json   # filters, full statistics, photo
 photostats-cli ~/Pictures --no-scan            # use the cache only
 photostats-cli ~/Pictures --reindex            # clear the cache and read everything
 photostats-cli ~/Pictures --refresh            # re-read every photo, keep the cache (resumable)
+photostats-cli ~/Pictures --orientation        # fill missing orientation from headers only
 photostats-cli ~/Photos --import-legacy        # import an old cache and exit
 ```
 

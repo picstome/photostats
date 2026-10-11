@@ -209,14 +209,16 @@ class ExifTool:
             self._fail(f"exiftool pipe broke: {exc}")
         return self._read_until_ready()
 
-    def read_paths(self, paths: list[str]) -> list[dict]:
+    def read_paths(self, paths: list[str], tags: list[str] | None = None) -> list[dict]:
         """Read metadata for *paths*; one dict per file exiftool could read.
 
         Callers pair results with the requested paths using ``SourceFile``.
+        ``tags`` overrides the tag arguments, which the orientation backfill uses
+        to ask only for the few tags a header read can answer.
         """
         if not paths:
             return []
-        raw = self.execute(["-j", *EXIFTAG_ARGS, *paths])
+        raw = self.execute(["-j", *(EXIFTAG_ARGS if tags is None else tags), *paths])
         if not raw.strip():
             return []
         try:

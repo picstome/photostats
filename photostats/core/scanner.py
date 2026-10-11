@@ -305,6 +305,24 @@ def mark_all_for_extraction(conn: sqlite3.Connection) -> int:
     return cursor.rowcount
 
 
+def relink_all(conn: sqlite3.Connection) -> int:
+    """Reconnect files left unlinked by a refresh, putting the cache back at rest.
+
+    A refresh unlinks files so the scan re-reads them; when the missing metadata
+    is filled by another route (the header-only orientation backfill), the links
+    have to be restored or the next scan would still re-read every file. Files
+    whose photo is genuinely gone are left alone.
+    """
+    cursor = conn.execute(
+        "UPDATE files SET photo_id = "
+        "(SELECT id FROM photos WHERE photos.rel_path = files.rel_path) "
+        "WHERE representative = 1 AND photo_id IS NULL "
+        "AND EXISTS (SELECT 1 FROM photos WHERE photos.rel_path = files.rel_path)"
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
 
 def prune_stale_dirs(conn: sqlite3.Connection, stats: WalkStats | None = None) -> int:
     """Forget files (and their photos) whose directory no longer exists.
