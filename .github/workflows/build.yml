@@ -53,9 +53,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: macos-14, name: macOS arm64, arch: arm64, artifact: macos-arm64}
-          # macos-13 was retired in December 2025; macos-15-intel is the last
-          # Intel image GitHub Actions offers.
+          # macos-14 was retired too: its arm64 image is now reported as an
+          # unsupported configuration and the job dies before checkout. macos-15
+          # is the arm64 image; macos-15-intel is the Intel one.
+          - {os: macos-15, name: macOS arm64, arch: arm64, artifact: macos-arm64}
           - {os: macos-15-intel, name: macOS x64, arch: x64, artifact: macos-x64}
           - {os: windows-latest, name: Windows, arch: x64, artifact: windows}
           - {os: ubuntu-22.04, name: Linux, arch: x64, artifact: linux}
