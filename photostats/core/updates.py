@@ -39,7 +39,12 @@ class Release:
 
     def asset_for(self, system: str | None = None, machine: str | None = None) -> str:
         """The download for this platform, or "" when the release has none."""
-        return self.assets.get(asset_name(system, machine), "")
+        name = asset_name(system, machine)
+        # GitHub stores an uploaded "Photo Stats-arm64.dmg" as
+        # "Photo.Stats-arm64.dmg": the space becomes a dot before the file gets
+        # its public name, which is what v1.0.0 and v1.1.0 actually publish. Both
+        # spellings have to be accepted or the banner offers no direct download.
+        return self.assets.get(name) or self.assets.get(name.replace(" ", "."), "")
 
 
 def parse_version(text: str) -> tuple[int, ...]:

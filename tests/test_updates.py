@@ -88,6 +88,18 @@ def test_fetch_latest_parses_a_release(monkeypatch):
     assert release.asset_for("Linux", "x86_64") == ""   # not in this release
 
 
+def test_a_space_in_the_asset_name_is_published_as_a_dot(monkeypatch):
+    """GitHub dotted the macOS names in 1.0.0 and 1.1.0; both must resolve."""
+    payload = _payload()
+    payload["assets"] = [
+        {"name": "Photo.Stats-arm64.dmg", "browser_download_url": "https://x/dotted.dmg"},
+    ]
+    _serve(monkeypatch, payload)
+    release = updates.fetch_latest()
+
+    assert release.asset_for("Darwin", "arm64") == "https://x/dotted.dmg"
+
+
 def test_fetch_latest_is_none_when_offline(monkeypatch):
     def boom(*args, **kwargs):
         raise OSError("no network")
