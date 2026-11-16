@@ -1,9 +1,9 @@
 ; Inno Setup script for the Windows installer.
-; Build with:  iscc /DMyAppVersion=1.0.0 build\photostats.iss
+; Build with:  iscc /DMyAppVersion=1.1.0 build\photostats.iss
 ; Produces dist\PhotoStats-Setup.exe
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.0"
+  #define MyAppVersion "1.1.0"
 #endif
 
 #define AppName "Photo Stats"

@@ -1,6 +1,6 @@
 """Photo Stats — photo metadata analyzer."""
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 #: What people call it in the settings file and on the command line. Kept
 #: short and stable: this string is a key, and changing it resets everyone's

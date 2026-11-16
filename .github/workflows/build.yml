@@ -127,7 +127,7 @@ jobs:
       # Inno Setup 6 ships with the windows-latest image.
       - name: Build installer (Windows)
         if: runner.os == 'Windows'
-        run: iscc /DMyAppVersion=1.0.0 build\photostats.iss
+        run: iscc /DMyAppVersion=1.1.0 build\photostats.iss
       - name: Confirm the installer was produced
         if: runner.os == 'Windows'
         run: |
@@ -170,27 +170,4 @@ jobs:
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: artifacts/**
-          body: |
-            ## Photo Stats
-
-            Download the build for your platform:
-
-            | Platform | File |
-            |---|---|
-            | macOS (Apple silicon) | `Photo Stats-arm64.dmg` |
-            | macOS (Intel) | `Photo Stats-x64.dmg` |
-            | Windows | `PhotoStats-windows.zip` (or `PhotoStats-Setup.exe`) |
-            | Linux | `PhotoStats-linux.tar.gz` |
-
-            macOS will warn the app is from an unidentified developer: open it
-            once with right-click → Open, then it opens normally.
-
-            All builds use the exiftool installed on your system:
-
-            - macOS: `brew install exiftool`
-            - Windows: download `exiftool.exe` from https://exiftool.org and put
-              it in your PATH (or point Photo Stats at it in Settings)
-            - Linux: `sudo apt install libimage-exiftool-perl`
-
-            Photo Stats opens a setup sheet with these commands if it cannot find
-            exiftool.
+          body_path: .github/release-notes.md
