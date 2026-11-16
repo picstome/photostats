@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -12,6 +15,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QRadioButton,
     QSizePolicy,
@@ -20,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...core.cache import move
 from ...core.exiftool import exiftool_version, find_exiftool, install_hint
 from ...core.paths import CACHE_CUSTOM, CACHE_LOCAL, CACHE_NEXT_TO_PHOTOS
 from ...i18n import languages, product_title, tr
@@ -40,10 +45,17 @@ CACHE_LABELS = {
 class SettingsDialog(QDialog):
     """Edits an :class:`AppConfig`; nothing is written until OK."""
 
-    def __init__(self, config, theme, parent=None) -> None:
+    def __init__(self, config, theme, parent=None, current_db=None, library=None,
+                 scanning: bool = False) -> None:
         super().__init__(parent)
         self.config = config
         self.theme = theme
+        #: The cache the open library is using now, if any. The move needs a
+        #: file to copy and the library to name its folder after.
+        self.current_db = Path(current_db) if current_db else None
+        self.library = Path(library) if library else None
+        #: A scan writing to the cache must finish before it is copied away.
+        self.scanning = scanning
         self.setWindowTitle(product_title("Settings"))
         self.setMinimumWidth(520)
         self.setStyleSheet(f"QDialog {{ background: {theme.bg}; }}")
@@ -77,6 +89,10 @@ class SettingsDialog(QDialog):
         custom_layout.setContentsMargins(0, 0, 0, 0)
         self.custom_path = QLabel(config.cache_custom_path or "—")
         self.custom_path.setObjectName("hint")
+        #: The folder itself, kept apart from the label: the label reads "—" when
+        #: nothing is chosen, and an older build saved that dash as the folder,
+        #: which put the cache in the working directory.
+        self.custom_folder = self._stored_custom_folder()
         self.custom_button = QPushButton(tr("Choose…"))
         self.custom_button.setObjectName("secondary")
         self.custom_button.clicked.connect(self._choose_custom)
@@ -174,6 +190,30 @@ class SettingsDialog(QDialog):
         # fields it describes.
         layout.addWidget(self.cache_note)
 
+        # Moving the cache is the one cache action that cannot be expressed as
+        # a choice in the drop-down: the file is already somewhere, and the
+        # point is to take it with its 500k rows instead of rebuilding it.
+        self.move_cache = QPushButton(tr("Move the cache to another folder…"))
+        self.move_cache.setObjectName("secondary")
+        self.move_cache.setToolTip(
+            tr("Copies the cache to a folder you choose — typically a faster disk — "
+               "without reading the photos again")
+        )
+        self.move_cache.setEnabled(
+            bool(self.current_db and self.current_db.exists()) and not self.scanning
+        )
+        self.move_cache.clicked.connect(self._move_cache)
+        move_row = QHBoxLayout()
+        move_row.setContentsMargins(0, 0, 0, 0)
+        move_row.addWidget(self.move_cache)
+        move_row.addStretch(1)
+        layout.addLayout(move_row)
+        self.move_note = QLabel("")
+        self.move_note.setObjectName("hint")
+        self.move_note.setWordWrap(True)
+        self.move_note.hide()
+        layout.addWidget(self.move_note)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText(tr("Save"))
         buttons.button(QDialogButtonBox.Ok).setObjectName("primary")
@@ -185,6 +225,14 @@ class SettingsDialog(QDialog):
         self._update_cache_note()
 
     # -- helpers -----------------------------------------------------------
+    def _stored_custom_folder(self) -> Path | None:
+        """The chosen folder, ignoring a relative or placeholder leftover."""
+        stored = self.config.cache_custom_path
+        if not stored:
+            return None
+        path = Path(stored).expanduser()
+        return path if path.is_absolute() else None
+
     def _on_cache_mode(self) -> None:
         self.custom_row.setVisible(self.cache_box.currentData() == CACHE_CUSTOM)
         self._update_cache_note()
@@ -203,7 +251,12 @@ class SettingsDialog(QDialog):
                    "shares, where a portable database would not work.")
             )
         else:
-            self.cache_note.setText(tr("Store the database in the folder you choose."))
+            self.cache_note.setText(
+                tr("Store the database in the folder you choose.")
+                + " "
+                + tr("An empty folder starts a new cache; the button below copies "
+                     "the current one there instead.")
+            )
 
     def _restore_defaults(self) -> None:
         """Put every field back to its shipped value, without saving yet.
@@ -223,7 +276,8 @@ class SettingsDialog(QDialog):
         select(self.theme_box, self.config.theme_name)
         select(self.cache_box, self.config.cache_mode)
         select(self.language_box, self.config.language)
-        self.custom_path.setText(self.config.cache_custom_path or "—")
+        self.custom_folder = self._stored_custom_folder()
+        self.custom_path.setText(str(self.custom_folder) if self.custom_folder else "—")
         self.workers.setValue(self.config.workers)
         self.batch.setValue(self.config.batch_size)
         self.include_no_date.setChecked(self.config.include_no_date)
@@ -240,9 +294,48 @@ class SettingsDialog(QDialog):
             )
         self._on_cache_mode()
 
+    def _move_cache(self) -> None:
+        """Copy the open library's cache to another folder, without a rescan.
+
+        The dialog only marks the choice; the copy happens now so that a Save
+        that follows has a cache waiting where it points. A Cancel leaves the
+        copy behind, which is why the note says where it went.
+        """
+        if self.current_db is None or self.library is None:
+            return
+        chosen = QFileDialog.getExistingDirectory(
+            self, tr("Choose a cache folder")
+        )
+        if not chosen:
+            return
+        root = Path(chosen)
+        target = self.config.paths.db_path(self.library, CACHE_CUSTOM, root)
+        if target.exists():
+            QMessageBox.warning(self, tr("There is already a cache there"), str(target))
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            move(self.current_db, target)
+        except Exception as exc:  # reported, never raised out of the dialog
+            QMessageBox.critical(self, tr("The cache could not be moved"), str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.current_db = target
+        self.custom_folder = root
+        self.custom_path.setText(str(root))
+        self.cache_box.setCurrentIndex(self.cache_box.findData(CACHE_CUSTOM))
+        self.move_note.setText(
+            tr("The cache was copied to {path}. Save to use it from there; the old "
+               "file is left alone.", path=str(target))
+        )
+        self.move_note.show()
+        self._on_cache_mode()
+
     def _choose_custom(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, tr("Choose a cache folder"))
         if folder:
+            self.custom_folder = Path(folder)
             self.custom_path.setText(folder)
 
     def _locate_exiftool(self) -> None:
@@ -266,7 +359,10 @@ class SettingsDialog(QDialog):
     # -- result ------------------------------------------------------------
     def apply_to_config(self) -> None:
         self.config.set_theme(self.theme_box.currentData())
-        self.config.set_cache(self.cache_box.currentData(), self.custom_path.text())
+        self.config.set_cache(
+            self.cache_box.currentData(),
+            str(self.custom_folder) if self.custom_folder else "",
+        )
         self.config.set_indexing(self.workers.value(), self.batch.value())
         self.config.set_include_no_date(self.include_no_date.isChecked())
         self.config.set_updates_enabled(self.check_updates.isChecked())

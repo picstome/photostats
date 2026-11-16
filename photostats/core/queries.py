@@ -351,8 +351,12 @@ class PhotoStore:
             yield from chunk
 
     def photo(self, rel_path: str) -> sqlite3.Row | None:
+        """One photo with its full metadata, the shape the row had before v4."""
         return self.conn.execute(
-            "SELECT * FROM photos WHERE rel_path = ?", (rel_path,)
+            "SELECT photos.*, photo_raw.raw_json FROM photos "
+            "LEFT JOIN photo_raw ON photo_raw.photo_id = photos.id "
+            "WHERE photos.rel_path = ?",
+            (rel_path,),
         ).fetchone()
 
     #: Column shown -> the normalised key that filters actually match on.

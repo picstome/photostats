@@ -394,13 +394,15 @@ class Indexer:
                     self._errors += 1
                     self.log(f"could not read the metadata of {rel_path}: {exc}")
                     continue
+                values, raw_json = dbmod.split_photo_row(row)
                 photo_id = existing.get(rel_path)
                 if photo_id is None:
-                    photo_id = conn.execute(dbmod.PHOTO_INSERT_SQL, row).lastrowid
+                    photo_id = conn.execute(dbmod.PHOTO_INSERT_SQL, values).lastrowid
                     existing[rel_path] = photo_id
                 else:
-                    # row[0] is rel_path, which the primary key already carries.
-                    conn.execute(dbmod.PHOTO_UPDATE_SQL, (*row[1:], photo_id))
+                    # values[0] is rel_path, which the primary key already carries.
+                    conn.execute(dbmod.PHOTO_UPDATE_SQL, (*values[1:], photo_id))
+                dbmod.store_raw_json(conn, photo_id, raw_json)
                 conn.execute("UPDATE files SET photo_id = ? WHERE id = ?", (photo_id, file_id))
                 written += 1
             highest = max(file_id for file_id, _, _ in rows)

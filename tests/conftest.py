@@ -37,6 +37,26 @@ FOCALS = [24, 35, 50, 70, 200]
 LIBRARY: list[dict] = []
 
 
+def legacy_schema(version: int) -> str:
+    """The schema as an older build left it, for migration tests.
+
+    ``photos`` carried ``raw_json`` until v4 and lacked ``orientation_tag``
+    before v3, so a fixture standing in for an old cache has to rebuild that
+    shape rather than use today's :data:`photostats.core.db.SCHEMA`.
+    """
+    from photostats.core import db as dbmod
+
+    schema = dbmod.SCHEMA
+    if version < 4:
+        schema = schema.replace(
+            "    resolution      TEXT,\n",
+            "    resolution      TEXT,\n    raw_json        TEXT,\n",
+        )
+    if version < 3:
+        schema = schema.replace(",\n    orientation_tag INTEGER\n", "\n")
+    return schema
+
+
 @pytest.fixture(scope="session", autouse=True)
 def isolated_settings(tmp_path_factory):
     """Point every AppConfig in the suite at a throwaway ini file.

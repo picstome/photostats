@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from conftest import make_library
+from conftest import legacy_schema, make_library
 
 from photostats.core.db import connect, init_db
 from photostats.core.indexer import PHASE_DONE, PHASE_PAUSED, Indexer
@@ -480,7 +480,7 @@ def test_a_version_1_database_gains_the_orientation_column(tmp_path):
 
     db = tmp_path / "old.db"
     conn = dbmod.connect(db)
-    conn.executescript(dbmod.SCHEMA.replace(",\n    orientation_tag INTEGER\n", "\n"))
+    conn.executescript(legacy_schema(1))
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '1')")
     conn.commit()
     before = {row[1] for row in conn.execute("PRAGMA table_info(photos)")}
@@ -510,7 +510,7 @@ def test_the_orientation_tag_is_backfilled_from_the_stored_metadata(tmp_path):
 
     db = tmp_path / "cache.db"
     conn = dbmod.connect(db)
-    conn.executescript(dbmod.SCHEMA)
+    conn.executescript(legacy_schema(2))
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2')")
     conn.execute("INSERT INTO photos (rel_path, width, height, raw_json) VALUES (?,?,?,?)",
                  ("rotated.CR3", 6960, 4640, json.dumps({"Orientation": 8})))
@@ -526,6 +526,61 @@ def test_the_orientation_tag_is_backfilled_from_the_stored_metadata(tmp_path):
     conn.close()
     assert tags["rotated.CR3"] == 8, "the tag stored in raw_json was not read back"
     assert tags["plain.CR3"] is None, "a row without the tag must stay NULL"
+
+
+def test_the_raw_metadata_lives_in_its_own_table(indexed):
+    """Schema v4: the JSON no query reads is out of the table every query scans."""
+    _root, db, _ = indexed
+    conn = connect(db)
+    try:
+        photos = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+        raws = conn.execute("SELECT COUNT(*) FROM photo_raw").fetchone()[0]
+        sample = conn.execute("SELECT raw_json FROM photo_raw LIMIT 1").fetchone()[0]
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(photos)")}
+    finally:
+        conn.close()
+    assert raws == photos == 24
+    assert sample and "SourceFile" in sample
+    assert "raw_json" not in columns
+
+
+def test_a_version_3_database_moves_the_raw_json_to_its_own_table(tmp_path):
+    """The migration has to reach the 500k-row cache already on disk."""
+    from photostats.core import db as dbmod
+
+    db = tmp_path / "v3.db"
+    conn = dbmod.connect(db)
+    conn.executescript(legacy_schema(3))
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3')")
+    conn.execute(
+        "INSERT INTO photos (rel_path, raw_json, orientation_tag) VALUES (?,?,?)",
+        ("full.jpg", '{"Model": "NIKON Z8"}', 1),
+    )
+    conn.execute(
+        "INSERT INTO photos (rel_path, raw_json, orientation_tag) VALUES (?,?,?)",
+        ("empty.jpg", None, 1),
+    )
+    conn.close()
+
+    dbmod.init_db(db)
+    dbmod.init_db(db)  # a second open must not try to migrate again
+
+    conn = dbmod.connect(db, readonly=True)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(photos)")}
+        raw = dict(conn.execute(
+            "SELECT photos.rel_path, photo_raw.raw_json FROM photos "
+            "LEFT JOIN photo_raw ON photo_raw.photo_id = photos.id"
+        ))
+        version = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert "raw_json" not in columns
+    assert raw["full.jpg"] == '{"Model": "NIKON Z8"}'
+    assert raw["empty.jpg"] is None
+    assert version == str(dbmod.SCHEMA_VERSION)
 
 
 def test_a_refresh_requeues_every_photo_once(indexed):

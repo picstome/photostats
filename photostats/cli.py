@@ -136,9 +136,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    from .core.cache import resolve as resolve_cache
+    from .core.config import AppConfig
     from .core.db import init_db
 
-    db_path = folder / "photo_stats.db"
+    # Same resolved cache as the window: a library whose cache was moved to a
+    # faster disk must not get a second, empty one beside the photos.
+    target = resolve_cache(AppConfig(), folder)
+    if target.foreign_root is not None:
+        print(
+            f"The cache at {target.legacy} was built from {target.foreign_root}.\n"
+            "Open this library in the app once to choose where its cache goes.",
+            file=sys.stderr,
+        )
+        return 1
+    db_path = target.path
     init_db(db_path)
 
     if args.import_legacy:

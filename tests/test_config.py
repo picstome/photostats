@@ -127,6 +127,23 @@ def test_reset_defaults_survives_a_reload(tmp_path):
 
 # -- folders that have gone away -------------------------------------------
 
+def test_choosing_a_folder_before_choosing_one_uses_the_app_data_dir(config, tmp_path):
+    """An empty custom folder is not "—" and is not the working directory."""
+    from photostats.core.paths import CACHE_CUSTOM
+
+    config.set_cache(CACHE_CUSTOM)
+    db = config.db_path(tmp_path / "photos")
+    assert db.parent.parent == config.paths.app_data_dir
+
+
+def test_going_back_to_the_photos_forgets_the_chosen_folder(config, tmp_path):
+    from photostats.core.paths import CACHE_CUSTOM
+
+    config.set_cache(CACHE_CUSTOM, str(tmp_path / "cache"))
+    config.set_cache(CACHE_NEXT_TO_PHOTOS)
+    assert config.cache_custom_path == ""
+
+
 def test_a_remembered_folder_that_no_longer_exists_is_forgotten(config):
     config.set_library("/tmp/photostats-no-such-folder/photos")
     assert config.settings.value("library")

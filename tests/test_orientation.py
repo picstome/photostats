@@ -59,13 +59,19 @@ def test_backfill_leaves_raw_json_alone(tmp_path):
     conn = connect(db)
     conn.execute("UPDATE photos SET orientation_tag = NULL")
     conn.commit()
-    before = dict(conn.execute("SELECT rel_path, raw_json FROM photos"))
+    before = dict(conn.execute(
+        "SELECT photos.rel_path, photo_raw.raw_json FROM photos "
+        "JOIN photo_raw ON photo_raw.photo_id = photos.id"
+    ))
     conn.close()
 
     assert backfill(db, root).ok
 
     conn = connect(db, readonly=True)
-    after = dict(conn.execute("SELECT rel_path, raw_json FROM photos"))
+    after = dict(conn.execute(
+        "SELECT photos.rel_path, photo_raw.raw_json FROM photos "
+        "JOIN photo_raw ON photo_raw.photo_id = photos.id"
+    ))
     conn.close()
     assert after == before, "a header read must not overwrite the full metadata"
 

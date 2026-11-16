@@ -33,6 +33,8 @@ from PySide6.QtWidgets import (
 
 from .. import AUTHOR_URL
 from ..core import updates
+from ..core.cache import CacheTarget
+from ..core.cache import resolve as resolve_cache
 from ..core.config import AppConfig
 from ..core.exiftool import find_exiftool, install_hint
 from ..core.filters import (
@@ -446,6 +448,32 @@ class MainWindow(QMainWindow):
         if folder:
             self.open_library(Path(folder))
 
+    def _confirm_foreign_cache(self, target: CacheTarget) -> bool:
+        """Ask before opening a cache that was built from another library.
+
+        Opening it would not fail outright: the scan prunes every row that is
+        not under this library, wiping an index that may have taken hours to
+        build. Naming the stranger and defaulting to a fresh cache is the only
+        safe way to re-use one shared cache folder for several libraries.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(tr("This cache belongs to another library"))
+        box.setText(tr(
+            "The cache in {folder} was built from {owner}.",
+            folder=str(target.legacy.parent if target.legacy else target.path.parent),
+            owner=target.foreign_root or "",
+        ))
+        box.setInformativeText(tr(
+            "Opening it here would remove that library's photos from it. "
+            "Start a new cache for this library instead?"
+        ))
+        use = box.addButton(tr("Use it anyway"), QMessageBox.DestructiveRole)
+        fresh = box.addButton(tr("Start a new cache"), QMessageBox.AcceptRole)
+        box.setDefaultButton(fresh)
+        box.exec()
+        return box.clickedButton() is use
+
     def open_library(self, folder: Path, quietly: bool = False) -> None:
         """Open a library, or ask for one if it is not there.
 
@@ -481,16 +509,30 @@ class MainWindow(QMainWindow):
         self.folder_bar.set_folder(folder)
         self.stack.setCurrentIndex(1)
 
-        self.db_path = self.config.db_path(folder)
+        target = resolve_cache(self.config, folder)
+        if target.foreign_root is not None and not self._confirm_foreign_cache(target):
+            # Start fresh at the per-library path the resolver preferred; the
+            # scan below writes this library's cache there.
+            target = CacheTarget(self.config.db_path(folder))
+        self.db_path = target.path
         self._close_store()
         from ..core.db import init_db
 
+        # A cache written by an older build is rewritten into the current schema
+        # (and compacted) the first time it is opened. That is seconds, not a
+        # hang, so a busy cursor explains the pause instead of a frozen window.
+        error: Exception | None = None
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             init_db(self.db_path)
             self.store = PhotoStore(self.db_path)
-        except Exception as exc:
-            self.logger.error("could not open %s: %s", self.db_path, exc)
-            QMessageBox.critical(self, "Cannot open the cache", str(exc))
+        except Exception as exc:  # reported below, once the cursor is back
+            error = exc
+        finally:
+            QApplication.restoreOverrideCursor()
+        if error is not None:
+            self.logger.error("could not open %s: %s", self.db_path, error)
+            QMessageBox.critical(self, "Cannot open the cache", str(error))
             return
 
         self._data_version += 1
@@ -1065,13 +1107,15 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         from ..i18n import choose_language, set_language
 
-        dialog = SettingsDialog(self.config, self.theme, self)
+        dialog = SettingsDialog(self.config, self.theme, self,
+                                current_db=self.db_path, library=self.library,
+                                scanning=self._scanning)
         if dialog.exec():
             dialog.apply_to_config()
-            if self.library is not None:
-                self.db_path = self.config.db_path(self.library)
             # A new language, or any explicit theme choice, needs a new tree:
-            # widgets bake in their strings and colours as they are built.
+            # widgets bake in their strings and colours as they are built. The
+            # rebuild reopens the library, which is also what picks up a new
+            # cache location (including one the dialog just moved).
             set_language(choose_language(self.config.language))
             self._rebuild_ui()
 

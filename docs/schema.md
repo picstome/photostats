@@ -1,7 +1,7 @@
 # The `photo_stats.db` schema
 
-The database is a plain SQLite file, written inside the photo folder. Anything
-that can read SQLite can read it — DB Browser for SQLite, the `sqlite3`
+The database is a plain SQLite file, written inside the photo folder by default.
+Anything that can read SQLite can read it — DB Browser for SQLite, the `sqlite3`
 command line, DuckDB, pandas, R.
 
 ```bash
@@ -14,8 +14,10 @@ conn = sqlite3.connect("~/Pictures/photo_stats.db")
 df = pd.read_sql("SELECT * FROM photos WHERE iso >= 3200", conn)
 ```
 
-Paths are **relative to the folder containing the database**, which is what lets
-the file travel between machines.
+Paths are **relative to the photo library**, not to the database: the file can be
+moved to a faster disk (Settings → Statistics cache → *Choose a folder…*) and the
+same rows still point at the photos. That is also what lets it travel between
+machines.
 
 ---
 
@@ -43,7 +45,6 @@ One row per shot, so it is the table to query.
 | `white_balance` | TEXT | Normalised: `auto`, `manual`, `daylight`, `cloudy`, `fluorescent`, `tungsten`, `shade`, `flash` |
 | `file_type` | TEXT | `raw`, `jpeg`, `tiff` |
 | `width`, `height`, `megapixels` | INTEGER/REAL | Resolution |
-| `raw_json` | TEXT | The untouched exiftool record, so new tags can be added without a re-scan |
 
 `camera_key` / `lens_key` are lower-cased and whitespace-collapsed. They are what
 the app filters on, so `NIKON Z8` and `nikon  z8` are one selection.
@@ -71,6 +72,30 @@ SELECT year, month, COUNT(*) FROM photos GROUP BY year, month ORDER BY year, mon
 -- Pairings that only happen once
 SELECT camera, lens, COUNT(*) AS n FROM photos
 GROUP BY camera, lens HAVING n <= 2;
+```
+
+---
+
+## `photo_raw`
+
+The untouched exiftool record for each photo, one row per shot read from its
+file. It is kept so a newer build can fill a new column from metadata already
+stored, without opening the photos again.
+
+| Column | Notes |
+|---|---|
+| `photo_id` | Primary key, `REFERENCES photos(id) ON DELETE CASCADE` |
+| `raw_json` | The exiftool record as JSON, e.g. `{"Model": "NIKON Z8", …}` |
+
+It lives in its own table because every figure on screen is a scan of `photos`;
+carrying 129 MB of JSON inside that table made each scan walk over pages no query
+read. A photo imported from the original script's cache has no row here — that
+cache never stored the record.
+
+```sql
+SELECT photos.rel_path, json_extract(photo_raw.raw_json, '$.LensModel')
+FROM photos JOIN photo_raw ON photo_raw.photo_id = photos.id
+WHERE photos.camera_key = 'nikon z8' LIMIT 10;
 ```
 
 ---
@@ -143,7 +168,8 @@ SELECT value FROM meta WHERE key = 'schema_version';
 Safe at any time:
 
 ```bash
-# Compact after deleting a big folder (the app does this on a clean exit too)
+# Compact after deleting a big folder (Photo Stats does this when the cache is
+# moved to another disk; on exit it only folds the write-ahead log back in)
 sqlite3 ~/Pictures/photo_stats.db "VACUUM;"
 
 # Start over: the next scan re-reads every photo

@@ -13,7 +13,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from .db import PHOTO_INSERT_SQL
+from .db import PHOTO_INSERT_SQL, split_photo_row
 from .formats import extension_of, is_raw
 from .parse import build_photo_row
 from .paths import LEGACY_DB_FILENAME
@@ -127,7 +127,8 @@ def import_legacy_cache(
                         current.st_size if current else None,
                         keep_raw=False,
                     )
-                    conn.execute(insert, row)
+                    values, _raw_json = split_photo_row(row)
+                    conn.execute(insert, values)
                     _link_file(conn, absolute, rel_path, legacy["mod_time"], current)
                     report.imported += 1
                 conn.commit()

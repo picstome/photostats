@@ -404,6 +404,67 @@ def test_settings_dialog_round_trip(window, tmp_path):
     assert window.config.theme_name == "light"
 
 
+def test_the_settings_dialog_moves_the_cache_without_a_rescan(window, tmp_path):
+    """The point of the button: take a 500k-row cache to the SSD, not rebuild it."""
+    from photostats.core import db as dbmod
+    from photostats.core.paths import CACHE_CUSTOM
+    from photostats.ui.panels.settings_dialog import SettingsDialog
+
+    library = tmp_path / "photos"
+    library.mkdir()
+    source = tmp_path / "old-cache"
+    source.mkdir()
+    old = source / "photo_stats.db"
+    dbmod.init_db(old)
+    conn = dbmod.connect(old)
+    dbmod.set_meta(conn, "root_folder", str(library))
+    for index in range(3):
+        conn.execute("INSERT INTO photos (rel_path) VALUES (?)", (f"{index}.jpg",))
+    conn.close()
+
+    destination = tmp_path / "fast-disk"
+    destination.mkdir()
+    dialog = SettingsDialog(window.config, window.theme, window,
+                            current_db=old, library=library)
+    assert dialog.move_cache.isEnabled()
+
+    with patch("photostats.ui.panels.settings_dialog.QFileDialog.getExistingDirectory",
+               return_value=str(destination)):
+        dialog.move_cache.click()
+
+    target = window.config.paths.db_path(library, CACHE_CUSTOM, destination)
+    assert target.exists(), "the cache was not copied"
+    assert old.exists(), "the original is left alone until the user deletes it"
+    assert dialog.custom_path.text() == str(destination)
+    assert dialog.cache_box.currentData() == CACHE_CUSTOM
+    assert dialog.move_note.text(), "a move with no confirmation is a silent one"
+
+    dialog.apply_to_config()
+    assert window.config.db_path(library) == target
+    dialog.deleteLater()
+
+
+def test_a_cache_moved_by_hand_is_used_without_a_rescan(window, library, app, tmp_path):
+    """The upgrade path for a big library: no second cache, no second scan."""
+    import shutil
+
+    from photostats.core.paths import CACHE_CUSTOM
+
+    cache = tmp_path / "fast-disk"
+    cache.mkdir()
+    legacy = cache / "photo_stats.db"
+    shutil.move(str(library / "photo_stats.db"), legacy)
+    window.config.set_cache(CACHE_CUSTOM, str(cache))
+
+    window.open_library(library)
+    spin(app, 2000)
+
+    assert window.db_path == legacy, "the moved cache was ignored"
+    assert not (library / "photo_stats.db").exists(), "a second cache was started"
+    assert window.store is not None
+    assert window.store.totals().total == 24
+
+
 # -- resilience ----------------------------------------------------------
 def test_opening_an_empty_folder_is_handled(window, tmp_path):
     empty = tmp_path / "nothing"

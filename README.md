@@ -165,6 +165,14 @@ locking), so the cache stays on your computer instead; **Settings → Statistics
 cache** chooses where. Deleting `photo_stats.db` is always safe — the next scan
 rebuilds it.
 
+That setting is also the answer to a slow photo drive. Statistics are a dozen
+scans of the cache per screen, and a spinning USB drive spends them seeking; keep
+the photos where they are and put the cache on the internal SSD. **On this
+computer only** and **Choose a folder…** give each library its own subfolder
+there, so several libraries can share one cache folder. **Move the cache to
+another folder…** copies an existing cache — compacted, without reading a single
+photo — and the next open uses it.
+
 If you used the original `photo_stats.py`, Photo Stats offers to import its
 `photo_stats_cache.db` the first time you open that folder.
 
@@ -197,6 +205,10 @@ EXIF parallelises almost perfectly, up to the point where the drive saturates.
 The default is `cores − 2`, capped at 12, which keeps the machine responsive
 during a scan. **Batch size** is a distant second: 50 is both the fastest and the
 smoothest.
+
+That is for the scan. For browsing, what matters is where the cache lives: a
+library on a slow drive is worth pointing at the internal disk, as described in
+[Where the data lives](#where-the-data-lives).
 
 On a slow or external drive, more is not better: enough files in flight and every
 read times out. Photo Stats notices that and shrinks the batch for the rest of

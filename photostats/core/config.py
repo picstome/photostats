@@ -116,10 +116,22 @@ class AppConfig:
         return self.paths.db_path(
             Path(folder) if folder else None, self.cache_mode, Path(custom) if custom else None
         )
+
+    def legacy_db_path(self) -> Path | None:
+        """The fixed cache file older builds wrote for every library."""
+        custom = self.cache_custom_path or None
+        return self.paths.legacy_db_path(
+            self.cache_mode, Path(custom) if custom else None
+        )
+
     def set_cache(self, mode: str, custom: str = "") -> None:
         self.settings.setValue("cache_mode", mode)
         if custom:
             self.settings.setValue("cache_custom", custom)
+        else:
+            # Leaving a stale folder behind is how "—" ended up stored as a path
+            # in an older build; nothing needs it back once it is not chosen.
+            self.settings.remove("cache_custom")
 
     # -- exiftool ----------------------------------------------------------
     @property

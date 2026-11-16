@@ -264,6 +264,19 @@ def test_raw_json_is_kept_for_later_fields():
     assert '"SomethingNew": 1' in values["raw_json"]
 
 
+def test_split_photo_row_takes_the_raw_metadata_out_of_the_table():
+    """Schema v4: the tuple still carries the JSON, the insert must not."""
+    from photostats.core.db import PHOTO_INSERT_SQL, split_photo_row
+
+    row = build_photo_row({"Model": "X", "SomethingNew": 1}, "a.jpg", "jpg")
+    values, raw = split_photo_row(row)
+
+    assert len(values) == len(PHOTO_COLUMNS.split(", ")) - 1
+    assert values[0] == "a.jpg"
+    assert '"SomethingNew": 1' in raw
+    assert "raw_json" not in PHOTO_INSERT_SQL
+
+
 def test_to_int_handles_rationals():
     assert to_int("1/125") == 0
     assert to_int("35 mm") == 35
